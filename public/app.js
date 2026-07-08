@@ -7,12 +7,13 @@
  * the subset of its API used here is declared below. */
 /* --------------------------------- setup ---------------------------------- */
 const TYPE_COLORS = {
-    jira: '#2684ff',
-    jira_entry: '#ff8b00',
-    merge_request: '#fc6d26',
-    branch: '#6f42c1',
-    commit: '#2da44e',
-    doc: '#d0a215',
+    // Dark theme palette: info / warning / error.light / primary / success / primary.light
+    jira: '#27b7ec',
+    jira_entry: '#ffa726',
+    merge_request: '#f46a66',
+    branch: '#93a9c1',
+    commit: '#c4e49e',
+    doc: '#e5eaef',
 };
 const EDGE_TYPES = [
     'parent',
@@ -52,6 +53,18 @@ function init() {
     buildFilters();
     buildLegend();
     els.form.addEventListener('submit', onSubmit);
+    requireElement('zoom-in').addEventListener('click', () => {
+        if (cy)
+            cy.zoom(Math.min(cy.zoom() * 1.25, 5));
+    });
+    requireElement('zoom-out').addEventListener('click', () => {
+        if (cy)
+            cy.zoom(Math.max(cy.zoom() / 1.25, 0.1));
+    });
+    requireElement('zoom-fit').addEventListener('click', () => {
+        if (cy)
+            cy.fit();
+    });
     // Allow deep-linking: ?key=JIRA-123
     const params = new URLSearchParams(window.location.search);
     const key = params.get('key');
@@ -141,6 +154,11 @@ function render(graph) {
         elements,
         style: cyStyle(),
         layout: { name: 'cose', animate: false, padding: 40, nodeDimensionsIncludeLabels: true },
+        zoomingEnabled: true,
+        userZoomingEnabled: true,
+        minZoom: 0.1,
+        maxZoom: 5,
+        wheelSensitivity: 0.2,
     });
     cy.on('tap', 'node', (evt) => showDetails(evt.target.data()));
     cy.on('tap', (evt) => {
@@ -180,7 +198,7 @@ function cyStyle() {
             style: {
                 'background-color': (ele) => colorFor(ele.data()),
                 label: 'data(label)',
-                color: '#e6e6ea',
+                color: '#e5eaef',
                 'font-size': 9,
                 'text-wrap': 'wrap',
                 'text-valign': 'bottom',
@@ -199,7 +217,7 @@ function cyStyle() {
         },
         {
             selector: 'node[type="jira"][!resolved]',
-            style: { 'background-opacity': 0.4, 'border-style': 'dashed', 'border-width': 1, 'border-color': '#9aa0b4' },
+            style: { 'background-opacity': 0.4, 'border-style': 'dashed', 'border-width': 1, 'border-color': '#93a9c1' },
         },
         {
             selector: 'node[type="merge_request"]',
@@ -221,13 +239,13 @@ function cyStyle() {
             selector: 'edge',
             style: {
                 width: 1.5,
-                'line-color': '#4a4d5e',
-                'target-arrow-color': '#4a4d5e',
+                'line-color': '#476f97',
+                'target-arrow-color': '#476f97',
                 'target-arrow-shape': 'triangle',
                 'curve-style': 'bezier',
                 label: 'data(type)',
                 'font-size': 7,
-                color: '#9aa0b4',
+                color: '#93a9c1',
                 'text-rotation': 'autorotate',
             },
         },

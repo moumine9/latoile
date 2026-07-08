@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>latoile — Jira × GitLab context graph</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap"
+    />
     <link rel="stylesheet" href="./styles.css" />
     <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
   </head>
@@ -30,6 +36,11 @@
         <div id="filters" class="filters"></div>
         <div id="cy"></div>
         <div id="legend" class="legend"></div>
+        <div class="zoom-controls">
+          <button id="zoom-in" type="button" title="Zoom in">+</button>
+          <button id="zoom-out" type="button" title="Zoom out">−</button>
+          <button id="zoom-fit" type="button" title="Fit graph">⤢</button>
+        </div>
       </section>
       <aside id="details" class="details">
         <p class="muted">Select a node to see its details.</p>
