@@ -19,18 +19,28 @@ and `glab` (GitLab) CLI sessions — no tokens are read from or stored in the re
 
 ### Quick start
 
+This repo uses **yarn**.
+
 ```bash
-npm install
-npm run build              # compile TypeScript (backend + frontend) to dist/ and public/app.js
+yarn install
+yarn build              # compile TypeScript (backend + frontend) to dist/ and public/app.js
 
 # 1) Live backend + frontend (runs acli/glab on demand)
-npm start                 # → http://localhost:3000
+yarn start              # → http://localhost:3000
 # open the UI, enter a Jira key, or deep-link: http://localhost:3000/?key=JIRA-123
 
 # 2) Direct data fetch, no UI (writes JSON to stdout or a file)
-npm run graph -- JIRA-123 --view full --out JIRA-123.graph.json
+yarn graph JIRA-123 --view full --out JIRA-123.graph.json
 # or, after building: node dist/src/cli.js JIRA-123 --view full
 ```
+
+Note: the Jira client calls `acli jira workitem view <KEY> --fields '*all' --json`
+(the key is positional; older acli versions used `--key`, which current versions
+reject). If issues come back empty, check `acli jira auth status` first.
+
+Known gap: GitLab merge requests and commits are correlated by the
+"GitLab for Jira Cloud" plugin on the Jira side, and that data is not yet
+read by the collector. `PLAN.md` describes the fix in progress.
 
 ### Backend API (live)
 
@@ -84,12 +94,16 @@ test/          unit + integration tests (node --test)
 dist/          compiled backend + tests (generated, git-ignored)
 ```
 
-Build with `npm run build` and run the tests with `npm test` (the `pretest`
-hook compiles the backend first). Type-check without emitting via `npm run typecheck`.
+Build with `yarn build` and run the tests with `yarn test` (the `pretest`
+hook compiles the backend first). Type-check without emitting via `yarn typecheck`.
 
-> The frontend loads **Cytoscape 3.30.2** from a CDN (pinned in
-> `public/index.html`). It is not an npm dependency; update both the CDN tag and
-> this note together when bumping the version.
+> The frontend loads **Cytoscape 3.30.2** and the **Quicksand** font from CDNs
+> (pinned in `public/index.html`). Cytoscape is not an npm dependency; update
+> both the CDN tag and this note together when bumping the version.
+
+The UI is dark-theme only, styled after the company design tokens (see
+`public/styles.css` for the palette). The canvas supports mouse-wheel and
+pinch zoom, plus the +/−/fit buttons in the bottom-right corner.
 
 ### Unified context model
 
