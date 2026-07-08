@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractJiraKeys, isJiraKey } from '../src/collector/jiraKeys.js';
-import { normalizeIssue, textFromDescription } from '../src/collector/acli.js';
+import { normalizeIssue, textFromDescription, type RawJiraIssue } from '../src/collector/acli.js';
 import { normalizeMergeRequest, normalizeCommit } from '../src/collector/glab.js';
 
 test('isJiraKey validates keys', () => {
@@ -34,7 +34,7 @@ test('textFromDescription flattens Atlassian Document Format', () => {
 });
 
 test('normalizeIssue maps Jira REST shape', () => {
-  const raw = {
+  const raw: RawJiraIssue = {
     key: 'JIRA-100',
     fields: {
       summary: 'Parent task',
@@ -86,6 +86,7 @@ test('normalizeMergeRequest and normalizeCommit', () => {
     },
     'group/proj'
   );
+  assert.ok(mr);
   assert.equal(mr.iid, 42);
   assert.equal(mr.project, 'group/proj');
   assert.equal(mr.sourceBranch, 'feature/JIRA-1');
@@ -98,6 +99,7 @@ test('normalizeMergeRequest and normalizeCommit', () => {
     author_name: 'Bob',
     created_at: '2026-01-01T00:00:00Z',
   });
+  assert.ok(commit);
   assert.equal(commit.sha, 'abc123def');
   assert.equal(commit.shortSha, 'abc123d');
   assert.equal(commit.author, 'Bob');

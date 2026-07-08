@@ -3,14 +3,21 @@
   "version": "0.1.0",
   "description": "Live context bridge: from a single Jira task, recursively fetch the Jira context graph, enrich it with GitLab data, expose it through a live backend API and visualize it.",
   "type": "module",
-  "main": "src/api/server.js",
+  "main": "dist/src/api/server.js",
   "bin": {
-    "latoile": "src/cli.js"
+    "latoile": "dist/src/cli.js"
   },
   "scripts": {
-    "start": "node src/api/server.js",
-    "graph": "node src/cli.js",
-    "test": "node --test"
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
+    "build:server": "tsc -p tsconfig.json",
+    "build:web": "tsc -p tsconfig.web.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "prestart": "tsc -p tsconfig.json",
+    "start": "node dist/src/api/server.js",
+    "pregraph": "tsc -p tsconfig.json",
+    "graph": "node dist/src/cli.js",
+    "pretest": "tsc -p tsconfig.json",
+    "test": "node --test dist/test/*.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -18,5 +25,10 @@
   "dependencies": {
     "express": "^4.19.2"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
 }

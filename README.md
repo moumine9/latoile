@@ -21,13 +21,15 @@ and `glab` (GitLab) CLI sessions — no tokens are read from or stored in the re
 
 ```bash
 npm install
+npm run build              # compile TypeScript (backend + frontend) to dist/ and public/app.js
 
 # 1) Live backend + frontend (runs acli/glab on demand)
 npm start                 # → http://localhost:3000
 # open the UI, enter a Jira key, or deep-link: http://localhost:3000/?key=JIRA-123
 
 # 2) Direct data fetch, no UI (writes JSON to stdout or a file)
-node src/cli.js JIRA-123 --view full --out JIRA-123.graph.json
+npm run graph -- JIRA-123 --view full --out JIRA-123.graph.json
+# or, after building: node dist/src/cli.js JIRA-123 --view full
 ```
 
 ### Backend API (live)
@@ -65,18 +67,25 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 
 ### Project layout
 
+The project is written in **TypeScript**. The backend compiles to `dist/` and the
+frontend compiles to `public/app.js` (see `tsconfig.json` / `tsconfig.web.json`).
+
 ```
 src/
   collector/   acli & glab clients, CLI runner, recursive BFS traversal
   model/       graph builder + normalized LLM context builder
   api/         live Express backend
-  pipeline.js  wires collector → model
-  cli.js       command-line entry point
-public/        frontend visualizer (Cytoscape)
+  web/         frontend visualizer source (compiled to public/app.js)
+  types.ts     shared domain types
+  pipeline.ts  wires collector → model
+  cli.ts       command-line entry point
+public/        frontend static assets (Cytoscape UI; app.js is generated)
 test/          unit + integration tests (node --test)
+dist/          compiled backend + tests (generated, git-ignored)
 ```
 
-Run the tests with `npm test`.
+Build with `npm run build` and run the tests with `npm test` (the `pretest`
+hook compiles the backend first). Type-check without emitting via `npm run typecheck`.
 
 > The frontend loads **Cytoscape 3.30.2** from a CDN (pinned in
 > `public/index.html`). It is not an npm dependency; update both the CDN tag and

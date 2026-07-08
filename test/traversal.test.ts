@@ -1,26 +1,47 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { traverse } from '../src/collector/traversal.js';
+import { traverse, type GitlabSource, type IssueSource } from '../src/collector/traversal.js';
 import { buildGraph, buildContext } from '../src/model/graph.js';
+import type { DocLink, GitlabContext, MergeRequest, NormalizedIssue } from '../src/types.js';
+
+interface FixtureIssue {
+  type?: string;
+  title?: string;
+  status?: string;
+  parentKey?: string;
+  subtasks?: string[];
+  links?: Array<{ key: string; type: string }>;
+  mentions?: string[];
+  documentation?: DocLink[];
+}
+
+type GitlabFixture = Record<string, { mergeRequests: Array<Partial<MergeRequest> & { iid: number }> }>;
+
+interface FakeClients {
+  acli: IssueSource;
+  glab: GitlabSource;
+  fetched: string[];
+}
 
 /** Builds a fake acli/glab pair backed by in-memory fixtures. */
-function makeClients(issues, gitlab = {}) {
-  const fetched = [];
-  const acli = {
-    async fetchIssue(key) {
+function makeClients(issues: Record<string, FixtureIssue>, gitlab: GitlabFixture = {}): FakeClients {
+  const fetched: string[] = [];
+  const acli: IssueSource = {
+    async fetchIssue(key: string): Promise<NormalizedIssue | null> {
       fetched.push(key);
-      return issues[key] ? { ...issues[key], key } : null;
+      const issue = issues[key];
+      return issue ? ({ ...issue, key } as NormalizedIssue) : null;
     },
   };
-  const glab = {
-    async fetchForKey(key) {
-      return gitlab[key] || { mergeRequests: [] };
+  const glab: GitlabSource = {
+    async fetchForKey(key: string): Promise<GitlabContext> {
+      return (gitlab[key] ?? { mergeRequests: [] }) as GitlabContext;
     },
   };
   return { acli, glab, fetched };
 }
 
-const FIXTURE = {
+const FIXTURE: Record<string, FixtureIssue> = {
   'JIRA-1': {
     type: 'Task',
     title: 'Entry',
@@ -45,7 +66,7 @@ test('traverse visits each issue once and records typed relations', async () => 
   // No key fetched more than once.
   assert.equal(new Set(fetched).size, fetched.length);
 
-  const rel = (from, to, relation) =>
+  const rel = (from: string, to: string, relation: string): boolean =>
     result.relations.some((r) => r.from === from && r.to === to && r.relation === relation);
 
   assert.ok(rel('JIRA-1', 'EPIC-1', 'parent'));
@@ -70,15 +91,17 @@ test('traverse respects maxDepth (records edge, does not fetch beyond)', async (
 });
 
 test('traverse handles unresolved issues without aborting', async () => {
-  const issues = { 'JIRA-1': { title: 'Entry', links: [{ key: 'GONE-1', type: 'relates' }] } };
+  const issues: Record<string, FixtureIssue> = {
+    'JIRA-1': { title: 'Entry', links: [{ key: 'GONE-1', type: 'relates' }] },
+  };
   const { acli, glab } = makeClients(issues);
   const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 2 });
-  assert.equal(result.issues.get('GONE-1').resolved, false);
-  assert.equal(result.issues.get('JIRA-1').resolved, true);
+  assert.equal(result.issues.get('GONE-1')?.resolved, false);
+  assert.equal(result.issues.get('JIRA-1')?.resolved, true);
 });
 
 test('buildGraph produces typed nodes and edges incl. GitLab', async () => {
-  const gitlab = {
+  const gitlab: GitlabFixture = {
     'JIRA-1': {
       mergeRequests: [
         {
@@ -98,18 +121,19 @@ test('buildGraph produces typed nodes and edges incl. GitLab', async () => {
   const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 2 });
   const graph = buildGraph(result);
 
-  const types = graph.nodes.reduce((acc, n) => {
+  const types = graph.nodes.reduce<Record<string, number>>((acc, n) => {
     acc[n.type] = (acc[n.type] || 0) + 1;
     return acc;
   }, {});
-  assert.ok(types.jira >= 4);
+  assert.ok((types.jira ?? 0) >= 4);
   assert.equal(types.merge_request, 1);
   assert.equal(types.branch, 1);
   assert.equal(types.commit, 1);
   assert.equal(types.doc, 1);
 
   const entry = graph.nodes.find((n) => n.id === 'JIRA-1');
-  assert.equal(entry.isEntry, true);
+  assert.ok(entry);
+  assert.equal(entry.type === 'jira' && entry.isEntry, true);
 
   assert.ok(graph.edges.some((e) => e.type === 'has_mr'));
   assert.ok(graph.edges.some((e) => e.type === 'has_commit'));
@@ -117,10 +141,19 @@ test('buildGraph produces typed nodes and edges incl. GitLab', async () => {
 });
 
 test('buildContext yields normalized LLM payload with traceability', async () => {
-  const gitlab = {
+  const gitlab: GitlabFixture = {
     'JIRA-1': {
       mergeRequests: [
-        { iid: 7, project: 'grp/proj', title: 't', state: 'opened', sourceBranch: 'b', targetBranch: 'main', url: 'u', commits: [{ sha: 'deadbeef', title: 'c' }] },
+        {
+          iid: 7,
+          project: 'grp/proj',
+          title: 't',
+          state: 'opened',
+          sourceBranch: 'b',
+          targetBranch: 'main',
+          url: 'u',
+          commits: [{ sha: 'deadbeef', shortSha: 'deadbee', title: 'c', author: undefined, timestamp: undefined }],
+        },
       ],
     },
   };
@@ -129,8 +162,9 @@ test('buildContext yields normalized LLM payload with traceability', async () =>
   const context = buildContext(result);
 
   const entry = context.items.find((i) => i.work_item.id === 'JIRA-1');
-  assert.equal(entry.gitlab.merge_request.id, 7);
-  assert.equal(entry.gitlab.branch.last_commit_sha, 'deadbeef');
+  assert.ok(entry);
+  assert.equal(entry.gitlab?.merge_request.id, 7);
+  assert.equal(entry.gitlab?.branch?.last_commit_sha, 'deadbeef');
   assert.ok(context.traceability.links.some((l) => l.jira_key === 'JIRA-1' && l.merge_request_id === 7));
   // Unresolved nodes are excluded from the context payload.
   assert.ok(context.items.every((i) => i.work_item.id));

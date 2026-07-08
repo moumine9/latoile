@@ -2,6 +2,18 @@
 import { writeFile } from 'node:fs/promises';
 import { buildContextGraph } from './pipeline.js';
 import { isJiraKey } from './collector/jiraKeys.js';
+import type { ContextGraph } from './pipeline.js';
+import type { ContextResult, GraphResult, LogFn } from './types.js';
+
+interface CliArgs {
+  view: string;
+  out?: string;
+  maxDepth?: number;
+  maxNodes?: number;
+  verbose?: boolean;
+  help?: boolean;
+  key?: string;
+}
 
 /**
  * CLI: latoile <JIRA-KEY> [options]
@@ -12,9 +24,9 @@ import { isJiraKey } from './collector/jiraKeys.js';
  *   --max-nodes <n>      override node cap
  *   --verbose            log progress to stderr
  */
-function parseArgs(argv) {
-  const args = { view: 'full' };
-  const rest = [];
+function parseArgs(argv: string[]): CliArgs {
+  const args: CliArgs = { view: 'full' };
+  const rest: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     switch (a) {
@@ -22,13 +34,13 @@ function parseArgs(argv) {
         args.out = argv[++i];
         break;
       case '--view':
-        args.view = argv[++i];
+        args.view = argv[++i] ?? args.view;
         break;
       case '--max-depth':
-        args.maxDepth = Number.parseInt(argv[++i], 10);
+        args.maxDepth = Number.parseInt(argv[++i] ?? '', 10);
         break;
       case '--max-nodes':
-        args.maxNodes = Number.parseInt(argv[++i], 10);
+        args.maxNodes = Number.parseInt(argv[++i] ?? '', 10);
         break;
       case '--verbose':
         args.verbose = true;
@@ -38,14 +50,14 @@ function parseArgs(argv) {
         args.help = true;
         break;
       default:
-        rest.push(a);
+        if (a !== undefined) rest.push(a);
     }
   }
   args.key = rest[0];
   return args;
 }
 
-function printHelp() {
+function printHelp(): void {
   process.stdout.write(
     `Usage: latoile <JIRA-KEY> [options]\n\n` +
       `Options:\n` +
@@ -58,7 +70,7 @@ function printHelp() {
   );
 }
 
-async function main() {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.help || !args.key) {
@@ -72,14 +84,18 @@ async function main() {
     process.exit(1);
   }
 
-  const log = args.verbose ? (msg) => process.stderr.write(`${msg}\n`) : undefined;
-  const { graph, context } = await buildContextGraph(key, {
+  const log: LogFn | undefined = args.verbose
+    ? (msg: string) => {
+        process.stderr.write(`${msg}\n`);
+      }
+    : undefined;
+  const { graph, context }: ContextGraph = await buildContextGraph(key, {
     maxDepth: Number.isFinite(args.maxDepth) ? args.maxDepth : undefined,
     maxNodes: Number.isFinite(args.maxNodes) ? args.maxNodes : undefined,
     log,
   });
 
-  let payload;
+  let payload: GraphResult | ContextResult | ContextGraph;
   if (args.view === 'graph') payload = graph;
   else if (args.view === 'context') payload = context;
   else payload = { graph, context };
@@ -94,6 +110,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`Error: ${err.stack || err.message}\n`);
+  const detail = err instanceof Error ? err.stack || err.message : String(err);
+  process.stderr.write(`Error: ${detail}\n`);
   process.exit(1);
 });

@@ -1,4 +1,41 @@
 import { isJiraKey } from './jiraKeys.js';
+import type {
+  GitlabContext,
+  IssueNode,
+  LogFn,
+  NormalizedIssue,
+  Relation,
+  TraversalResult,
+} from '../types.js';
+
+/** Minimal Jira issue source contract required by the traversal. */
+export interface IssueSource {
+  fetchIssue(key: string): Promise<NormalizedIssue | null>;
+}
+
+/** Minimal GitLab source contract required by the traversal. */
+export interface GitlabSource {
+  fetchForKey(key: string): Promise<GitlabContext>;
+}
+
+export interface TraverseDeps {
+  acli: IssueSource;
+  glab: GitlabSource;
+}
+
+export interface TraverseOptions {
+  maxDepth?: number;
+  maxNodes?: number;
+  log?: LogFn;
+}
+
+type AddRelation = (from: string, to: string, relation: string, linkType?: string) => void;
+
+interface Neighbor {
+  key: string;
+  relation: string;
+  linkType?: string;
+}
 
 /**
  * Breadth-first traversal of the Jira relationship graph starting from a single
@@ -11,35 +48,27 @@ import { isJiraKey } from './jiraKeys.js';
  *   - derives sibling relationships from shared parents,
  *   - respects `maxDepth` and `maxNodes`,
  *   - enriches every resolved issue with its GitLab context.
- *
- * @param {string} entryKey
- * @param {object} deps
- * @param {{ fetchIssue: (key: string) => Promise<object|null> }} deps.acli
- * @param {{ fetchForKey: (key: string) => Promise<{ mergeRequests: object[] }> }} deps.glab
- * @param {object} [options]
- * @param {number} [options.maxDepth]
- * @param {number} [options.maxNodes]
- * @param {(msg: string) => void} [options.log]
- * @returns {Promise<object>} traversal result
  */
-export async function traverse(entryKey, { acli, glab }, options = {}) {
+export async function traverse(
+  entryKey: string,
+  { acli, glab }: TraverseDeps,
+  options: TraverseOptions = {}
+): Promise<TraversalResult> {
   const { maxDepth = 2, maxNodes = 100, log = () => {} } = options;
 
   if (!isJiraKey(entryKey)) {
     throw new Error(`Invalid entry Jira key: ${entryKey}`);
   }
 
-  /** @type {Map<string, object>} key -> issue node */
-  const issues = new Map();
-  /** @type {Array<{from:string,to:string,relation:string,linkType?:string}>} */
-  const relations = [];
-  const relationSeen = new Set();
-  const visited = new Set();
+  const issues = new Map<string, IssueNode>();
+  const relations: Relation[] = [];
+  const relationSeen = new Set<string>();
+  const visited = new Set<string>();
 
   let capped = false;
   let maxDepthReached = false;
 
-  const addRelation = (from, to, relation, linkType) => {
+  const addRelation: AddRelation = (from, to, relation, linkType) => {
     if (!from || !to || from === to) return;
     const id = `${from}|${to}|${relation}|${linkType || ''}`;
     if (relationSeen.has(id)) return;
@@ -49,9 +78,10 @@ export async function traverse(entryKey, { acli, glab }, options = {}) {
 
   // Ensure a placeholder node exists for any key referenced by an edge, so the
   // graph can render keys that were discovered but not fetched (depth/cap).
-  const ensureNode = (key, depth) => {
-    if (!issues.has(key)) {
-      issues.set(key, {
+  const ensureNode = (key: string, depth: number): IssueNode => {
+    let node = issues.get(key);
+    if (!node) {
+      node = {
         key,
         resolved: false,
         depth,
@@ -60,17 +90,20 @@ export async function traverse(entryKey, { acli, glab }, options = {}) {
         mentions: [],
         documentation: [],
         gitlab: { mergeRequests: [] },
-      });
+      };
+      issues.set(key, node);
     }
-    return issues.get(key);
+    return node;
   };
 
-  const queue = [{ key: entryKey, depth: 0 }];
+  const queue: Array<{ key: string; depth: number }> = [{ key: entryKey, depth: 0 }];
   visited.add(entryKey);
   ensureNode(entryKey, 0);
 
   while (queue.length > 0) {
-    const { key, depth } = queue.shift();
+    const current = queue.shift();
+    if (!current) break;
+    const { key, depth } = current;
 
     if (issues.size > maxNodes && issues.get(key)?.resolved) {
       continue;
@@ -92,7 +125,8 @@ export async function traverse(entryKey, { acli, glab }, options = {}) {
     try {
       node.gitlab = await glab.fetchForKey(key);
     } catch (err) {
-      log(`gitlab enrichment failed for ${key}: ${err.message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      log(`gitlab enrichment failed for ${key}: ${message}`);
       node.gitlab = { mergeRequests: [] };
     }
 
@@ -135,12 +169,9 @@ export async function traverse(entryKey, { acli, glab }, options = {}) {
   };
 }
 
-/**
- * Flattens an issue's relationships into a list of typed neighbor references.
- * @param {object} issue
- */
-function collectNeighbors(issue) {
-  const out = [];
+/** Flattens an issue's relationships into a list of typed neighbor references. */
+function collectNeighbors(issue: NormalizedIssue): Neighbor[] {
+  const out: Neighbor[] = [];
   if (issue.parentKey) out.push({ key: issue.parentKey, relation: 'parent' });
   for (const st of issue.subtasks || []) out.push({ key: st, relation: 'subtask' });
   for (const link of issue.links || []) {
@@ -153,16 +184,17 @@ function collectNeighbors(issue) {
 /**
  * Derives sibling relationships: two issues are siblings when they share the
  * same parent. Parents are known both from `parentKey` and `subtasks` arrays.
- * @param {Map<string, object>} issues
- * @param {(from:string,to:string,relation:string)=>void} addRelation
  */
-function deriveSiblings(issues, addRelation) {
-  /** @type {Map<string, Set<string>>} parent -> children */
-  const childrenByParent = new Map();
-  const register = (parent, child) => {
+function deriveSiblings(issues: Map<string, IssueNode>, addRelation: AddRelation): void {
+  const childrenByParent = new Map<string, Set<string>>();
+  const register = (parent: string | undefined, child: string): void => {
     if (!parent || !child || parent === child) return;
-    if (!childrenByParent.has(parent)) childrenByParent.set(parent, new Set());
-    childrenByParent.get(parent).add(child);
+    let children = childrenByParent.get(parent);
+    if (!children) {
+      children = new Set<string>();
+      childrenByParent.set(parent, children);
+    }
+    children.add(child);
   };
 
   for (const node of issues.values()) {
@@ -174,8 +206,11 @@ function deriveSiblings(issues, addRelation) {
     const list = [...children];
     for (let i = 0; i < list.length; i += 1) {
       for (let j = i + 1; j < list.length; j += 1) {
-        addRelation(list[i], list[j], 'sibling');
-        addRelation(list[j], list[i], 'sibling');
+        const a = list[i];
+        const b = list[j];
+        if (a === undefined || b === undefined) continue;
+        addRelation(a, b, 'sibling');
+        addRelation(b, a, 'sibling');
       }
     }
   }

@@ -1,17 +1,30 @@
 import { createRunner } from './collector/runner.js';
 import { AcliClient } from './collector/acli.js';
 import { GlabClient } from './collector/glab.js';
-import { traverse } from './collector/traversal.js';
+import { traverse, type TraverseDeps } from './collector/traversal.js';
 import { buildGraph, buildContext } from './model/graph.js';
-import { config as defaultConfig } from './config.js';
+import { config as defaultConfig, type Config } from './config.js';
+import type { ContextResult, GraphResult, LogFn } from './types.js';
+
+/** Both payloads produced by a full pipeline run. */
+export interface ContextGraph {
+  graph: GraphResult;
+  context: ContextResult;
+}
+
+export interface BuildContextGraphOptions {
+  config?: Config;
+  clients?: TraverseDeps;
+  log?: LogFn;
+  maxDepth?: number;
+  maxNodes?: number;
+}
 
 /**
  * Builds the collector clients from configuration. Exposed so tests can swap the
  * underlying exec function.
- * @param {typeof defaultConfig} [config]
- * @param {(msg: string) => void} [log]
  */
-export function createClients(config = defaultConfig, log = () => {}) {
+export function createClients(config: Config = defaultConfig, log: LogFn = () => {}): TraverseDeps {
   const run = createRunner({
     delayMs: config.cliDelayMs,
     retries: config.cliRetries,
@@ -26,16 +39,11 @@ export function createClients(config = defaultConfig, log = () => {}) {
 /**
  * Runs the full pipeline for a Jira entry key and returns both the renderable
  * graph and the normalized LLM context payload.
- *
- * @param {string} entryKey
- * @param {object} [options]
- * @param {typeof defaultConfig} [options.config]
- * @param {{ acli: object, glab: object }} [options.clients]
- * @param {(msg: string) => void} [options.log]
- * @param {number} [options.maxDepth]
- * @param {number} [options.maxNodes]
  */
-export async function buildContextGraph(entryKey, options = {}) {
+export async function buildContextGraph(
+  entryKey: string,
+  options: BuildContextGraphOptions = {}
+): Promise<ContextGraph> {
   const config = options.config || defaultConfig;
   const log = options.log || (() => {});
   const clients = options.clients || createClients(config, log);

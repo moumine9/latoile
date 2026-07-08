@@ -7,52 +7,60 @@
  *              has_mr | has_branch | has_commit             (Jira → GitLab)
  *              documented_by                                (Jira → doc)
  */
+import type {
+  Commit,
+  ContextItem,
+  ContextResult,
+  DocLink,
+  GraphEdge,
+  GraphNode,
+  GraphResult,
+  MergeRequest,
+  TraceabilityLink,
+  TraversalResult,
+} from '../types.js';
 
-function mrNodeId(mr) {
+function mrNodeId(mr: MergeRequest): string {
   return `mr:${mr.project || 'default'}!${mr.iid}`;
 }
-function branchNodeId(mr) {
+function branchNodeId(mr: MergeRequest): string {
   return `branch:${mr.project || 'default'}@${mr.sourceBranch}`;
 }
-function commitNodeId(commit) {
+function commitNodeId(commit: Commit): string {
   return `commit:${commit.sha}`;
 }
-function docNodeId(doc) {
+function docNodeId(doc: DocLink): string {
   return `doc:${doc.url}`;
 }
 
-/**
- * @param {ReturnType<import('../collector/traversal.js').traverse>} traversal
- */
-export function buildGraph(traversal) {
-  const nodes = [];
-  const edges = [];
-  const nodeIndex = new Map();
-  const edgeSeen = new Set();
+export function buildGraph(traversal: TraversalResult): GraphResult {
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+  const nodeIndex = new Map<string, GraphNode>();
+  const edgeSeen = new Set<string>();
 
-  const addNode = (id, node) => {
-    if (nodeIndex.has(id)) return nodeIndex.get(id);
-    const stored = { id, ...node };
-    nodeIndex.set(id, stored);
-    nodes.push(stored);
-    return stored;
+  const addNode = (node: GraphNode): GraphNode => {
+    const existing = nodeIndex.get(node.id);
+    if (existing) return existing;
+    nodeIndex.set(node.id, node);
+    nodes.push(node);
+    return node;
   };
 
-  const addEdge = (source, target, type, extra) => {
+  const addEdge = (source: string, target: string, type: string, linkType?: string): void => {
     if (!source || !target) return;
     const id = `${source}->${target}:${type}`;
     if (edgeSeen.has(id)) return;
     edgeSeen.add(id);
-    edges.push({ id, source, target, type, ...(extra || {}) });
+    edges.push(linkType ? { id, source, target, type, linkType } : { id, source, target, type });
   };
 
-  const issues = traversal.issues instanceof Map
-    ? traversal.issues
-    : new Map(Object.entries(traversal.issues || {}));
+  const issues = traversal.issues;
 
   // Jira nodes -------------------------------------------------------------
   for (const issue of issues.values()) {
-    addNode(issue.key, {
+    addNode({
+      id: issue.key,
       type: 'jira',
       key: issue.key,
       resolved: Boolean(issue.resolved),
@@ -69,7 +77,7 @@ export function buildGraph(traversal) {
 
   // Jira ↔ Jira edges ------------------------------------------------------
   for (const rel of traversal.relations || []) {
-    addEdge(rel.from, rel.to, rel.relation, rel.linkType ? { linkType: rel.linkType } : undefined);
+    addEdge(rel.from, rel.to, rel.relation, rel.linkType);
   }
 
   // GitLab + documentation nodes/edges ------------------------------------
@@ -77,7 +85,8 @@ export function buildGraph(traversal) {
     const mrs = issue.gitlab?.mergeRequests || [];
     for (const mr of mrs) {
       const mrId = mrNodeId(mr);
-      addNode(mrId, {
+      addNode({
+        id: mrId,
         type: 'merge_request',
         iid: mr.iid,
         project: mr.project,
@@ -92,7 +101,8 @@ export function buildGraph(traversal) {
 
       if (mr.sourceBranch) {
         const bId = branchNodeId(mr);
-        addNode(bId, {
+        addNode({
+          id: bId,
           type: 'branch',
           name: mr.sourceBranch,
           project: mr.project,
@@ -102,7 +112,8 @@ export function buildGraph(traversal) {
 
       for (const commit of mr.commits || []) {
         const cId = commitNodeId(commit);
-        addNode(cId, {
+        addNode({
+          id: cId,
           type: 'commit',
           sha: commit.sha,
           shortSha: commit.shortSha,
@@ -116,7 +127,8 @@ export function buildGraph(traversal) {
 
     for (const doc of issue.documentation || []) {
       const dId = docNodeId(doc);
-      addNode(dId, {
+      addNode({
+        id: dId,
         type: 'doc',
         source: doc.source,
         title: doc.title,
@@ -137,14 +149,11 @@ export function buildGraph(traversal) {
 /**
  * Produces the normalized, LLM-friendly context payload (an array of unified
  * work-item objects matching the model documented in the README).
- * @param {ReturnType<import('../collector/traversal.js').traverse>} traversal
  */
-export function buildContext(traversal) {
-  const issues = traversal.issues instanceof Map
-    ? traversal.issues
-    : new Map(Object.entries(traversal.issues || {}));
+export function buildContext(traversal: TraversalResult): ContextResult {
+  const issues = traversal.issues;
 
-  const items = [];
+  const items: ContextItem[] = [];
   for (const issue of issues.values()) {
     if (!issue.resolved) continue;
     const mrs = issue.gitlab?.mergeRequests || [];
@@ -197,15 +206,15 @@ export function buildContext(traversal) {
     });
   }
 
-  const traceability = { links: [] };
+  const links: TraceabilityLink[] = [];
   for (const item of items) {
     const key = item.work_item.id;
     for (const mr of item.merge_requests) {
-      traceability.links.push({ jira_key: key, merge_request_id: mr.id });
+      links.push({ jira_key: key, merge_request_id: mr.id });
     }
   }
 
-  return { entry: traversal.entry, items, traceability };
+  return { entry: traversal.entry, items, traceability: { links } };
 }
 
 export default buildGraph;

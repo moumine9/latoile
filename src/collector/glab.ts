@@ -1,4 +1,52 @@
 import { isJiraKey } from './jiraKeys.js';
+import type { Commit, GitlabContext, LogFn, MergeRequest, RunFn } from '../types.js';
+
+/* -------------------------------------------------------------------------- */
+/* Raw glab payload shapes                                                     */
+/* -------------------------------------------------------------------------- */
+
+interface RawMergeRequest {
+  iid?: number;
+  id?: number;
+  references?: { full?: string };
+  project_path?: string;
+  project?: { path_with_namespace?: string };
+  title?: string;
+  state?: string;
+  source_branch?: string;
+  sourceBranch?: string;
+  target_branch?: string;
+  targetBranch?: string;
+  web_url?: string;
+  webUrl?: string;
+  url?: string;
+  author?: { username?: string; name?: string };
+}
+
+interface RawCommit {
+  id?: string;
+  sha?: string;
+  short_id?: string;
+  title?: string;
+  message?: string;
+  author_name?: string;
+  author?: { name?: string };
+  committer_name?: string;
+  created_at?: string;
+  committed_date?: string;
+  authored_date?: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Client                                                                      */
+/* -------------------------------------------------------------------------- */
+
+export interface GlabClientDeps {
+  run: RunFn;
+  bin?: string;
+  projects?: string[];
+  log?: LogFn;
+}
 
 /**
  * Thin client around the GitLab CLI (`glab`).
@@ -8,14 +56,12 @@ import { isJiraKey } from './jiraKeys.js';
  * commits. All output is normalized into latoile's internal GitLab shape.
  */
 export class GlabClient {
-  /**
-   * @param {object} deps
-   * @param {(bin: string, args: string[]) => Promise<string>} deps.run
-   * @param {string} [deps.bin]
-   * @param {string[]} [deps.projects] explicit projects to search (group/path)
-   * @param {(msg: string) => void} [deps.log]
-   */
-  constructor({ run, bin = 'glab', projects = [], log = () => {} }) {
+  run: RunFn;
+  bin: string;
+  projects: string[];
+  log: LogFn;
+
+  constructor({ run, bin = 'glab', projects = [], log = () => {} }: GlabClientDeps) {
     if (typeof run !== 'function') {
       throw new TypeError('GlabClient requires a `run` function');
     }
@@ -25,19 +71,15 @@ export class GlabClient {
     this.log = log;
   }
 
-  /**
-   * Merge-request search argument vector for a given key/project.
-   * @param {string} key
-   * @param {string|undefined} project
-   */
-  mrListArgs(key, project) {
+  /** Merge-request search argument vector for a given key/project. */
+  mrListArgs(key: string, project: string | undefined): string[] {
     const args = ['mr', 'list', '--search', key, '--output', 'json'];
     if (project) args.push('--repo', project);
     return args;
   }
 
   /** `glab api` args to list commits of a merge request. */
-  mrCommitsArgs(projectPath, iid) {
+  mrCommitsArgs(projectPath: string, iid: number): string[] {
     const encoded = encodeURIComponent(projectPath);
     return ['api', `projects/${encoded}/merge_requests/${iid}/commits`];
   }
@@ -45,27 +87,25 @@ export class GlabClient {
   /**
    * Resolves all GitLab context for a single Jira key across configured
    * projects. Never throws: on failure it logs and returns whatever it has.
-   *
-   * @param {string} key
-   * @returns {Promise<{ mergeRequests: object[] }>}
    */
-  async fetchForKey(key) {
+  async fetchForKey(key: string): Promise<GitlabContext> {
     if (!isJiraKey(key)) return { mergeRequests: [] };
-    const scopes = this.projects.length ? this.projects : [undefined];
-    const mergeRequests = [];
-    const seen = new Set();
+    const scopes: Array<string | undefined> = this.projects.length ? this.projects : [undefined];
+    const mergeRequests: MergeRequest[] = [];
+    const seen = new Set<string>();
 
     for (const project of scopes) {
-      let raw;
+      let list: RawMergeRequest[];
       try {
         const stdout = await this.run(this.bin, this.mrListArgs(key, project));
-        raw = stdout ? JSON.parse(stdout) : [];
+        const data = stdout ? (JSON.parse(stdout) as RawMergeRequest[]) : [];
+        list = Array.isArray(data) ? data : [];
       } catch (err) {
-        this.log(`glab mr search failed for ${key}${project ? ` in ${project}` : ''}: ${err.message}`);
+        const message = err instanceof Error ? err.message : String(err);
+        this.log(`glab mr search failed for ${key}${project ? ` in ${project}` : ''}: ${message}`);
         continue;
       }
 
-      const list = Array.isArray(raw) ? raw : [];
       for (const item of list) {
         const mr = normalizeMergeRequest(item, project);
         if (!mr) continue;
@@ -74,7 +114,8 @@ export class GlabClient {
         seen.add(dedupeKey);
 
         mr.commits = await this.fetchCommits(mr).catch((err) => {
-          this.log(`glab commits failed for MR ${dedupeKey}: ${err.message}`);
+          const message = err instanceof Error ? err.message : String(err);
+          this.log(`glab commits failed for MR ${dedupeKey}: ${message}`);
           return [];
         });
         mergeRequests.push(mr);
@@ -87,15 +128,19 @@ export class GlabClient {
   /**
    * Best-effort commit resolution for a normalized MR. Requires a project path
    * and iid; returns an empty array when either is unavailable.
-   * @param {object} mr
-   * @returns {Promise<object[]>}
    */
-  async fetchCommits(mr) {
+  async fetchCommits(mr: MergeRequest): Promise<Commit[]> {
     const projectPath = mr.project;
     if (!projectPath || !mr.iid) return [];
     const stdout = await this.run(this.bin, this.mrCommitsArgs(projectPath, mr.iid));
-    const raw = stdout ? JSON.parse(stdout) : [];
-    return (Array.isArray(raw) ? raw : []).map(normalizeCommit).filter(Boolean);
+    const data = stdout ? (JSON.parse(stdout) as RawCommit[]) : [];
+    const list = Array.isArray(data) ? data : [];
+    const out: Commit[] = [];
+    for (const item of list) {
+      const commit = normalizeCommit(item);
+      if (commit) out.push(commit);
+    }
+    return out;
   }
 }
 
@@ -103,14 +148,17 @@ export class GlabClient {
 /* Normalization helpers                                                       */
 /* -------------------------------------------------------------------------- */
 
-function firstDefined(...values) {
+function firstDefined<T>(...values: Array<T | undefined | null>): T | undefined {
   for (const v of values) {
     if (v !== undefined && v !== null && v !== '') return v;
   }
   return undefined;
 }
 
-export function normalizeMergeRequest(item, fallbackProject) {
+export function normalizeMergeRequest(
+  item: RawMergeRequest | null | undefined,
+  fallbackProject: string | undefined
+): MergeRequest | null {
   if (!item || typeof item !== 'object') return null;
   const iid = firstDefined(item.iid, item.id);
   if (iid === undefined) return null;
@@ -125,8 +173,8 @@ export function normalizeMergeRequest(item, fallbackProject) {
   return {
     iid,
     project: typeof project === 'string' ? project : undefined,
-    title: firstDefined(item.title, ''),
-    state: firstDefined(item.state, 'unknown'),
+    title: item.title ?? '',
+    state: item.state ?? 'unknown',
     sourceBranch: firstDefined(item.source_branch, item.sourceBranch),
     targetBranch: firstDefined(item.target_branch, item.targetBranch),
     url: firstDefined(item.web_url, item.webUrl, item.url),
@@ -135,14 +183,14 @@ export function normalizeMergeRequest(item, fallbackProject) {
   };
 }
 
-export function normalizeCommit(item) {
+export function normalizeCommit(item: RawCommit | null | undefined): Commit | null {
   if (!item || typeof item !== 'object') return null;
   const sha = firstDefined(item.id, item.sha, item.short_id);
   if (!sha) return null;
   return {
     sha,
-    shortSha: firstDefined(item.short_id, String(sha).slice(0, 8)),
-    title: firstDefined(item.title, item.message, ''),
+    shortSha: firstDefined(item.short_id, String(sha).slice(0, 8)) ?? String(sha).slice(0, 8),
+    title: firstDefined(item.title, item.message) ?? '',
     author: firstDefined(item.author_name, item.author?.name, item.committer_name),
     timestamp: firstDefined(item.created_at, item.committed_date, item.authored_date),
   };

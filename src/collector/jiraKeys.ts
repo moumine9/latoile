@@ -6,21 +6,16 @@
 export const JIRA_KEY_REGEX = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 
 /**
- * Validates a single Jira key.
- * @param {string} value
- * @returns {boolean}
+ * Validates a single Jira key. Acts as a type guard so callers can narrow
+ * `string | undefined` values down to `string`.
  */
-export function isJiraKey(value) {
+export function isJiraKey(value: string | undefined | null): value is string {
   if (typeof value !== 'string') return false;
   return /^[A-Z][A-Z0-9]+-\d+$/.test(value.trim());
 }
 
-/**
- * Extracts every distinct Jira key mentioned in a block of text.
- * @param {string} [text]
- * @returns {string[]}
- */
-export function extractJiraKeys(text) {
+/** Extracts every distinct Jira key mentioned in a block of text. */
+export function extractJiraKeys(text: string | undefined | null): string[] {
   if (!text || typeof text !== 'string') return [];
   const matches = text.match(JIRA_KEY_REGEX) || [];
   return [...new Set(matches)];
