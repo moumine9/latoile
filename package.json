@@ -1,0 +1,22 @@
+{
+  "name": "latoile",
+  "version": "0.1.0",
+  "description": "Live context bridge: from a single Jira task, recursively fetch the Jira context graph, enrich it with GitLab data, expose it through a live backend API and visualize it.",
+  "type": "module",
+  "main": "src/api/server.js",
+  "bin": {
+    "latoile": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/api/server.js",
+    "graph": "node src/cli.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}
