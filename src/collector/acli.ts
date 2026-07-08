@@ -121,7 +121,9 @@ export class AcliClient {
    * Kept as a method so it can be overridden / inspected in tests.
    */
   viewArgs(key: string): string[] {
-    return ['jira', 'workitem', 'view', '--key', key, '--json'];
+    // acli takes the key positionally; default fields omit issuelinks/subtasks/
+    // parent/comment, so request them all.
+    return ['jira', 'workitem', 'view', key, '--fields', '*all', '--json'];
   }
 
   /** Fetches and parses the raw JSON payload for an issue. */
