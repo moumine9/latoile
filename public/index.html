@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>latoile — Jira × GitLab context graph</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  </head>
+  <body>
+    <header class="toolbar">
+      <h1>latoile</h1>
+      <form id="query-form" class="query">
+        <input
+          id="jira-key"
+          type="text"
+          placeholder="Entry Jira key (e.g. JIRA-123)"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <label>depth <input id="max-depth" type="number" min="0" value="2" /></label>
+        <label>nodes <input id="max-nodes" type="number" min="1" value="100" /></label>
+        <button type="submit">Fetch</button>
+      </form>
+      <div id="status" class="status"></div>
+    </header>
+
+    <main>
+      <section class="graph-pane">
+        <div id="filters" class="filters"></div>
+        <div id="cy"></div>
+        <div id="legend" class="legend"></div>
+      </section>
+      <aside id="details" class="details">
+        <p class="muted">Select a node to see its details.</p>
+      </aside>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
