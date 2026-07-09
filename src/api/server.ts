@@ -14,13 +14,49 @@ const publicDir = path.resolve(__dirname, '../../../public');
 export interface GraphRunOptions {
   maxDepth?: number;
   maxNodes?: number;
+  log?: (msg: string) => void;
 }
 
 /** Runs the pipeline for a key; injectable so the server can be tested. */
 export type GraphRunFn = (key: string, opts: GraphRunOptions) => Promise<ContextGraph>;
 
+/** Executes an acli invocation for the search endpoint; injectable for tests. */
+export type SearchRunFn = (bin: string, args: string[]) => Promise<string>;
+
 export interface CreateAppOptions {
   run?: GraphRunFn;
+  searchRun?: SearchRunFn;
+}
+
+/** Shape of one row of `acli jira workitem search --json` that we consume. */
+interface RawSearchResult {
+  key?: string;
+  fields?: {
+    summary?: string;
+    issuetype?: { name?: string };
+  };
+}
+
+/**
+ * Escapes a user string for interpolation inside a double-quoted JQL string
+ * literal. Backslashes first, then quotes, so a trailing `\` cannot swallow
+ * the closing quote. Control characters are dropped.
+ */
+export function escapeJqlString(value: string): string {
+  return value
+    .replace(/[\p{Cc}]/gu, '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+}
+
+async function defaultSearchRun(bin: string, args: string[]): Promise<string> {
+  const { createRunner } = await import('../collector/runner.js');
+  const r = createRunner({
+    delayMs: config.cliDelayMs,
+    retries: config.cliRetries,
+    timeoutMs: config.cliTimeoutMs,
+  });
+  return r(bin, args);
 }
 
 /**
@@ -34,6 +70,45 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' });
+  });
+
+  app.get('/api/search', async (req: Request, res: Response) => {
+    const q = req.query.q;
+    if (typeof q !== 'string' || q.trim() === '') {
+      res.json([]);
+      return;
+    }
+
+    try {
+      const searchRun: SearchRunFn = options.searchRun || defaultSearchRun;
+      const escaped = escapeJqlString(q.trim());
+      const jql = `text ~ "${escaped}" OR summary ~ "${escaped}"`;
+      const stdout = await searchRun(config.acliBin, [
+        'jira', 'workitem', 'search',
+        '--jql', jql,
+        '--limit', '5',
+        '--fields', 'key,summary,issuetype',
+        '--json',
+      ]);
+      if (!stdout) {
+        res.json([]);
+        return;
+      }
+
+      const parsed: RawSearchResult[] = JSON.parse(stdout) as RawSearchResult[];
+      const results = Array.isArray(parsed) ? parsed : [];
+      const mapped = results
+        .filter((r) => typeof r.key === 'string')
+        .map((r) => ({
+          key: r.key,
+          summary: r.fields?.summary || '',
+          type: r.fields?.issuetype?.name || '',
+        }));
+      res.json(mapped);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
   });
 
   /**
@@ -61,19 +136,42 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
       if (Number.isFinite(n) && n > 0) opts.maxNodes = n;
     }
 
+    const isSSE = req.headers.accept === 'text/event-stream';
+    if (isSSE) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      opts.log = (msg) => {
+        res.write(`data: ${JSON.stringify({ type: 'log', message: msg })}\n\n`);
+      };
+    }
+
     try {
       const { graph, context } = await run(key, opts);
       const view = typeof req.query.view === 'string' ? req.query.view : 'graph';
+      let finalData: ContextGraph | ContextGraph['graph'] | ContextGraph['context'];
       if (view === 'context') {
-        res.json(context);
+        finalData = context;
       } else if (view === 'full') {
-        res.json({ graph, context });
+        finalData = { graph, context };
       } else {
-        res.json(graph);
+        finalData = graph;
+      }
+
+      if (isSSE) {
+        res.write(`data: ${JSON.stringify({ type: 'result', data: finalData })}\n\n`);
+        res.end();
+      } else {
+        res.json(finalData);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: message });
+      if (isSSE) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: message })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: message });
+      }
     }
   });
 

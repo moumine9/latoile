@@ -162,3 +162,63 @@ test('GET /api/health returns ok', async () => {
     server.close();
   }
 });
+
+/* ------------------------------- /api/search ------------------------------ */
+
+test('escapeJqlString neutralizes quotes and trailing backslashes', async () => {
+  const { escapeJqlString } = await import('../src/api/server.js');
+  assert.equal(escapeJqlString('plain text'), 'plain text');
+  assert.equal(escapeJqlString('foo" OR key = "X'), 'foo\\" OR key = \\"X');
+  assert.equal(escapeJqlString('trailing\\'), 'trailing\\\\');
+  assert.equal(escapeJqlString('a b\nc'), 'a bc');
+});
+
+test('GET /api/search escapes the query into JQL and maps results', async () => {
+  const seenArgs: string[][] = [];
+  const app = createApp({
+    searchRun: async (_bin, args) => {
+      seenArgs.push(args);
+      return JSON.stringify([
+        { key: 'PV2-1', fields: { summary: 'One', issuetype: { name: 'Bug' } } },
+        { fields: { summary: 'no key, dropped' } },
+      ]);
+    },
+  });
+  const server = await listen(app);
+  const port = portOf(server);
+  try {
+    const q = 'foo" OR assignee is not EMPTY OR text ~ "';
+    const res = await fetch(`http://localhost:${port}/api/search?q=${encodeURIComponent(q)}`);
+    const body = (await res.json()) as Array<{ key: string; summary: string; type: string }>;
+    assert.equal(body.length, 1);
+    assert.deepEqual(body[0], { key: 'PV2-1', summary: 'One', type: 'Bug' });
+
+    const jqlIdx = (seenArgs[0] ?? []).indexOf('--jql');
+    const jql = seenArgs[0]?.[jqlIdx + 1] ?? '';
+    // The malicious quotes must arrive escaped, never as raw string delimiters.
+    assert.ok(jql.includes('\\"'));
+    assert.ok(!/[^\\]" OR assignee/.test(jql));
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /api/search returns [] for an empty query without invoking acli', async () => {
+  let called = false;
+  const app = createApp({
+    searchRun: async () => {
+      called = true;
+      return '[]';
+    },
+  });
+  const server = await listen(app);
+  const port = portOf(server);
+  try {
+    const res = await fetch(`http://localhost:${port}/api/search?q=%20`);
+    const body = (await res.json()) as unknown[];
+    assert.deepEqual(body, []);
+    assert.equal(called, false);
+  } finally {
+    server.close();
+  }
+});
