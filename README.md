@@ -14,8 +14,16 @@ in descriptions/comments), enriches every issue with its GitLab context (merge
 requests, branches, commits), builds a graph, and serves it through a **live
 backend** plus an interactive **frontend** visualizer.
 
-Authentication is delegated entirely to the locally logged-in `acli` (Atlassian)
-and `glab` (GitLab) CLI sessions — no tokens are read from or stored in the repo.
+Authentication piggybacks on the locally logged-in `acli` (Atlassian) and
+`glab` (GitLab) CLI sessions **by default**. For much faster startup, both
+clients can bypass their CLIs entirely:
+
+- **Jira**: set `LATOILE_JIRA_URL` + `LATOILE_JIRA_EMAIL` + `LATOILE_JIRA_TOKEN`
+  (Atlassian API token from https://id.atlassian.com/manage-profile/security/api-tokens).
+  Each issue fetch drops from ~5 s (acli spawn) to ~0.3 s.
+- **GitLab**: the HTTP client reads the PAT from your local glab config automatically
+  (`%LOCALAPPDATA%\glab-cli\config.yml` on Windows). Can be overridden with
+  `LATOILE_GITLAB_TOKEN`. No credentials are stored in this repository.
 
 ### Quick start
 
@@ -38,23 +46,37 @@ Note: the Jira client calls `acli jira workitem view <KEY> --fields '*all' --jso
 (the key is positional; older acli versions used `--key`, which current versions
 reject). If issues come back empty, check `acli jira auth status` first.
 
-Known gap: GitLab merge requests and commits are correlated by the
-"GitLab for Jira Cloud" plugin on the Jira side, and that data is not yet
-read by the collector. `PLAN.md` describes the fix in progress.
+### How GitLab data is found
+
+Jira's "GitLab for Jira Cloud" plugin writes a dev-status summary into each
+issue (`customfield_10000`). The collector reads it as a hint: when Jira says
+an issue has zero branches, commits, and MRs, the GitLab lookup is skipped
+entirely. Otherwise MRs are searched by Jira key in the title across your
+configured projects or groups (the team convention: branch names and MR titles
+contain the key, e.g. `fix/PV2-17818-...`).
+
+GitLab calls go through `src/collector/gitlab-http.ts`, which uses `fetch()`
+with the token of your logged-in `glab` session (read from glab's config file
+at runtime, or from `LATOILE_GITLAB_TOKEN`). This is roughly 15× faster than
+spawning a `glab` process per request. The `glab`-spawning client
+(`src/collector/glab.ts`) is still there and shares the same normalizers.
 
 ### Backend API (live)
 
-Every request runs the collector against `acli` / `glab` on demand.
+Every request runs the collector against `acli` and the GitLab API on demand.
 
 | Endpoint | Description |
 | --- | --- |
 | `GET /api/graph/:key` | Renderable graph `{ nodes, edges }` (default) |
 | `GET /api/graph/:key?view=context` | Normalized LLM context payload |
 | `GET /api/graph/:key?view=full` | Both graph and context |
+| `GET /api/search?q=text` | Jira text search (top 5 matches, for the UI autocomplete) |
 | `GET /api/health` | Liveness probe |
 
 Query params: `maxDepth` (traversal depth) and `maxNodes` (node cap) override the
-defaults per request.
+defaults per request. Requesting `/api/graph/:key` with `Accept: text/event-stream`
+streams progress logs as server-sent events, then the final payload — the UI
+uses this for its loading indicator.
 
 Example:
 
@@ -69,11 +91,23 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `PORT` | `3000` | Backend HTTP port |
 | `LATOILE_MAX_DEPTH` | `2` | Traversal depth from the entry point |
 | `LATOILE_MAX_NODES` | `100` | Hard cap on fetched Jira nodes |
-| `LATOILE_GITLAB_PROJECTS` | _(empty)_ | Comma-separated `group/project` scopes to search |
+| `LATOILE_GITLAB_PROJECTS` | _(empty)_ | Comma-separated `group/project` paths to search (takes precedence over groups) |
+| `LATOILE_GITLAB_GROUPS` | _(empty)_ | Comma-separated group paths or IDs; projects are enumerated once per run |
+| `LATOILE_GITLAB_ACTIVE_DAYS` | `90` | Skip group projects with no activity in this many days |
+| `LATOILE_GITLAB_CONCURRENCY` | `8` | Max parallel GitLab API requests |
+| `LATOILE_GITLAB_TOKEN` | _(empty)_ | Override the token normally read from glab's config |
+| `LATOILE_JIRA_URL` | _(empty)_ | e.g. `https://your-org.atlassian.net`; enables the direct Jira HTTP client |
+| `LATOILE_JIRA_EMAIL` | _(empty)_ | Atlassian account email (used with `LATOILE_JIRA_TOKEN`) |
+| `LATOILE_JIRA_TOKEN` | _(empty)_ | Atlassian API token — when set with URL+email, replaces acli (~15× faster) |
 | `LATOILE_CLI_DELAY_MS` | `0` | Delay between CLI calls (rate limiting) |
 | `LATOILE_CLI_RETRIES` | `2` | Retries on transient CLI failures |
 | `LATOILE_CLI_TIMEOUT_MS` | `30000` | Per CLI-call timeout |
 | `LATOILE_ACLI_BIN` / `LATOILE_GLAB_BIN` | `acli` / `glab` | Binary overrides |
+
+A `.env` file in the project root (gitignored) is loaded at startup; shell
+exports win over `.env` values. Set at least `LATOILE_GITLAB_GROUPS` or
+`LATOILE_GITLAB_PROJECTS`, otherwise GitLab enrichment returns nothing and
+logs a warning.
 
 ### Project layout
 
@@ -101,9 +135,12 @@ hook compiles the backend first). Type-check without emitting via `yarn typechec
 > (pinned in `public/index.html`). Cytoscape is not an npm dependency; update
 > both the CDN tag and this note together when bumping the version.
 
-The UI is dark-theme only, styled after the company design tokens (see
-`public/styles.css` for the palette). The canvas supports mouse-wheel and
-pinch zoom, plus the +/−/fit buttons in the bottom-right corner.
+The UI ships light and dark palettes built from the company design tokens
+(`public/styles.css`), defaulting to dark with a toggle in the header. The
+search box autocompletes against `/api/search` when you type text instead of
+a key. The canvas supports mouse-wheel and pinch zoom, +/−/fit buttons, PNG
+and JSON export, and double-clicking a node opens it in Jira or GitLab (set
+`LATOILE_JIRA_BASE_URL` for Jira links).
 
 ### Unified context model
 
@@ -165,8 +202,11 @@ Beyond the per-issue context object, latoile emits a graph payload
 
 - **Node types**: `jira`, `merge_request`, `branch`, `commit`, `doc`.
 - **Edge types**: `parent`, `subtask`, `sibling`, `link` (typed), `mention`
-  (Jira ↔ Jira); `has_mr`, `has_branch`, `has_commit` (Jira → GitLab);
-  `documented_by` (Jira → doc).
+  (Jira ↔ Jira); `has_mr` (Jira → MR); `has_branch`, `has_commit`
+  (MR → branch/commit); `documented_by` (Jira → doc). The valid source/target
+  types per edge are declared in `EDGE_SCHEMA` (`src/model/graph.ts`).
+- Every edge carries a `strength`: `strong` for structural Jira links,
+  `weak` for text mentions. Consumers can filter on it.
 - The entry-point node is flagged (`isEntry`) and highlighted in the frontend;
   keys discovered beyond `maxDepth`/`maxNodes` appear as unresolved placeholders.
 
