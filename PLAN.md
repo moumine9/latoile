@@ -1,6 +1,25 @@
 # Plan — GitLab correlation and remaining work
 
-Session date: 2026-07-08. Written so work can resume after the usage limit resets.
+Updated: 2026-07-09.
+
+## Direction (long term)
+
+laToile should be *alive*: a persistent, ever-growing knowledge graph that remembers every ticket/MR/commit it has ever seen and can be queried across tickets — not just a per-request visualization. Target architecture:
+
+- **Fetch cache (done)**: SQLite behind the `CacheStore` interface — speed only, short TTL, no graph semantics.
+- **Knowledge graph (next)**: a Neo4j-backed persistence layer. Every traversal upserts its nodes/edges (with timestamps) into the graph, so coverage accumulates over time. Enables Cypher queries like "what connects PV2-17818 to PV2-16002" or "all issues whose MRs touched file X". Design note: add a `GraphSink` hook in `pipeline.ts` that receives the `TraversalResult` after each run; Neo4j is one implementation.
+- **Query surface (done)**: the MCP server. Future tools should query the knowledge graph directly (fast, offline) and fall back to live traversal on cache miss.
+
+## Session 2026-07-09
+
+- **SQLite fetch cache** (`src/cache/`): `node:sqlite`-based, `~/.latoile/cache.db`, TTL `LATOILE_CACHE_TTL_MIN` (default 15 min), disable with `LATOILE_CACHE=off`, bypass per-request with `?refresh=1` / `refresh` option. Wrappers around `IssueSource`/`GitlabSource`; traversal untouched. Null Jira results not cached. Node ≥ 22.13 required (engines updated).
+- **MCP server** (`src/mcp/server.ts`, bin `latoile-mcp`): stdio transport, tool `get_context(jiraKey, maxDepth?, maxNodes?, refresh?)` returning the LLM context payload. Verified with a JSON-RPC handshake smoke test. Register: `claude mcp add latoile -- node <repo>/dist/src/mcp/server.js`.
+- 36 tests pass (`test/cache.test.ts` covers TTL expiry, hit/miss, refresh semantics, null non-caching, MCP handler).
+- **Sibling clique fix**: sibling edges were emitted in both directions for every pair of children of a shared parent (PV2-17903: 834 of 902 edges were siblings). Now emitted once per pair (sorted) and only when the shared parent is not a graph node. PV2-17903 is down to 31 edges.
+- **Defaults tightened**: `maxDepth` 2 → 1, `maxNodes` 100 → 50 (config, traversal, README, MCP schema).
+- **Idea (user)**: support a GitLab MR URL as entry point — resolve MR, extract the Jira key from title/branch, run the normal traversal.
+
+# Previous session (2026-07-08)
 
 ## Done in this session
 

@@ -73,8 +73,8 @@ Every request runs the collector against `acli` and the GitLab API on demand.
 | `GET /api/search?q=text` | Jira text search (top 5 matches, for the UI autocomplete) |
 | `GET /api/health` | Liveness probe |
 
-Query params: `maxDepth` (traversal depth) and `maxNodes` (node cap) override the
-defaults per request. Requesting `/api/graph/:key` with `Accept: text/event-stream`
+Query params: `maxDepth` (traversal depth), `maxNodes` (node cap), and
+`refresh=1` (bypass the fetch cache) override the defaults per request. Requesting `/api/graph/:key` with `Accept: text/event-stream`
 streams progress logs as server-sent events, then the final payload — the UI
 uses this for its loading indicator.
 
@@ -89,8 +89,8 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | Backend HTTP port |
-| `LATOILE_MAX_DEPTH` | `2` | Traversal depth from the entry point |
-| `LATOILE_MAX_NODES` | `100` | Hard cap on fetched Jira nodes |
+| `LATOILE_MAX_DEPTH` | `1` | Traversal depth from the entry point |
+| `LATOILE_MAX_NODES` | `50` | Hard cap on fetched Jira nodes |
 | `LATOILE_GITLAB_PROJECTS` | _(empty)_ | Comma-separated `group/project` paths to search (takes precedence over groups) |
 | `LATOILE_GITLAB_GROUPS` | _(empty)_ | Comma-separated group paths or IDs; projects are enumerated once per run |
 | `LATOILE_GITLAB_ACTIVE_DAYS` | `90` | Skip group projects with no activity in this many days |
@@ -103,11 +103,38 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `LATOILE_CLI_RETRIES` | `2` | Retries on transient CLI failures |
 | `LATOILE_CLI_TIMEOUT_MS` | `30000` | Per CLI-call timeout |
 | `LATOILE_ACLI_BIN` / `LATOILE_GLAB_BIN` | `acli` / `glab` | Binary overrides |
+| `LATOILE_CACHE` | `on` | Set to `off` to disable the SQLite fetch cache |
+| `LATOILE_CACHE_PATH` | `~/.latoile/cache.db` | Cache file location |
+| `LATOILE_CACHE_TTL_MIN` | `15` | Cache freshness window in minutes |
 
 A `.env` file in the project root (gitignored) is loaded at startup; shell
 exports win over `.env` values. Set at least `LATOILE_GITLAB_GROUPS` or
 `LATOILE_GITLAB_PROJECTS`, otherwise GitLab enrichment returns nothing and
 logs a warning.
+
+### Fetch cache
+
+Jira issues and GitLab lookups are cached in a single-file SQLite database
+(Node's built-in `node:sqlite`, so Node ≥ 22.13 is required — no native
+dependency). Entries expire after `LATOILE_CACHE_TTL_MIN` minutes; repeat
+lookups within the window are near-instant. `?refresh=1` (API) or
+`refresh: true` (pipeline/MCP) forces live fetches while still updating the
+cache. Failed Jira lookups are never cached.
+
+### MCP server
+
+latoile exposes its pipeline as an MCP tool so coding agents can pull ticket
+context mid-conversation:
+
+```bash
+yarn build:server
+claude mcp add latoile -- node /path/to/latoile/dist/src/mcp/server.js
+```
+
+The `get_context` tool takes `jiraKey` (plus optional `maxDepth`, `maxNodes`,
+`refresh`) and returns the normalized LLM context payload. Configuration comes
+from the same environment / `.env` as the server, resolved from the working
+directory the MCP server is started in. Run it manually with `yarn mcp`.
 
 ### Project layout
 
