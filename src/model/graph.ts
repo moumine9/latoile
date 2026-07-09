@@ -20,6 +20,35 @@ import type {
   TraversalResult,
 } from '../types.js';
 
+/* -------------------------------------------------------------------------- */
+/* Schema                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type NodeType = GraphNode['type'];
+
+/**
+ * Declared edge schema: maps each edge type to its required source and target
+ * node types. Used for validation and as living documentation of the graph
+ * vocabulary. Violation is logged as a warning rather than thrown so the graph
+ * is always renderable even when data is malformed.
+ */
+export const EDGE_SCHEMA: Readonly<
+  Record<string, { source: NodeType; target: NodeType }>
+> = {
+  parent:        { source: 'jira',          target: 'jira' },
+  subtask:       { source: 'jira',          target: 'jira' },
+  sibling:       { source: 'jira',          target: 'jira' },
+  link:          { source: 'jira',          target: 'jira' },
+  mention:       { source: 'jira',          target: 'jira' },
+  has_mr:        { source: 'jira',          target: 'merge_request' },
+  has_branch:    { source: 'merge_request', target: 'branch' },
+  has_commit:    { source: 'merge_request', target: 'commit' },
+  documented_by: { source: 'jira',          target: 'doc' },
+};
+
+/** Edge types that express a text-mention rather than a structural Jira link. */
+const WEAK_EDGE_TYPES = new Set<string>(['mention']);
+
 function mrNodeId(mr: MergeRequest): string {
   return `mr:${mr.project || 'default'}!${mr.iid}`;
 }
@@ -33,7 +62,7 @@ function docNodeId(doc: DocLink): string {
   return `doc:${doc.url}`;
 }
 
-export function buildGraph(traversal: TraversalResult): GraphResult {
+export function buildGraph(traversal: TraversalResult, jiraBaseUrl: string = ''): GraphResult {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const nodeIndex = new Map<string, GraphNode>();
@@ -52,7 +81,10 @@ export function buildGraph(traversal: TraversalResult): GraphResult {
     const id = `${source}->${target}:${type}`;
     if (edgeSeen.has(id)) return;
     edgeSeen.add(id);
-    edges.push(linkType ? { id, source, target, type, linkType } : { id, source, target, type });
+    const strength: 'strong' | 'weak' = WEAK_EDGE_TYPES.has(type) ? 'weak' : 'strong';
+    const edge: GraphEdge = { id, source, target, type, strength };
+    if (linkType) edge.linkType = linkType;
+    edges.push(edge);
   };
 
   const issues = traversal.issues;
@@ -72,6 +104,7 @@ export function buildGraph(traversal: TraversalResult): GraphResult {
       assignee: issue.assignee,
       parentKey: issue.parentKey,
       documentation: issue.documentation || [],
+      url: jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/${issue.key}` : undefined,
     });
   }
 
@@ -120,6 +153,7 @@ export function buildGraph(traversal: TraversalResult): GraphResult {
           title: commit.title,
           author: commit.author,
           timestamp: commit.timestamp,
+          url: mr.url ? mr.url.replace(/\/merge_requests\/\d+/, `/commit/${commit.sha}`) : undefined,
         });
         addEdge(mrId, cId, 'has_commit');
       }

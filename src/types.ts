@@ -33,6 +33,8 @@ export interface NormalizedIssue {
   mentions: string[];
   documentation: DocLink[];
   description: string;
+  /** Derived from Jira's dev-status field. undefined = unknown; false = confirmed none. */
+  hasGitlabData?: boolean;
 }
 
 /** A commit normalized from GitLab. */
@@ -89,6 +91,8 @@ export interface Relation {
   to: string;
   relation: string;
   linkType?: string;
+  /** strong = structural Jira link; weak = text-mention only. */
+  strength: 'strong' | 'weak';
 }
 
 /** Summary statistics for a traversal run. */
@@ -126,6 +130,7 @@ export interface JiraGraphNode {
   assignee?: string;
   parentKey?: string;
   documentation: DocLink[];
+  url?: string;
 }
 
 export interface MergeRequestGraphNode {
@@ -156,6 +161,7 @@ export interface CommitGraphNode {
   title: string;
   author: string | undefined;
   timestamp: string | undefined;
+  url?: string;
 }
 
 export interface DocGraphNode {
@@ -179,6 +185,8 @@ export interface GraphEdge {
   target: string;
   type: string;
   linkType?: string;
+  /** strong = structural; weak = text-mention only. */
+  strength: 'strong' | 'weak';
 }
 
 export interface GraphResult {

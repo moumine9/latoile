@@ -74,6 +74,12 @@ interface JiraFields {
   description?: JiraDescription;
   comment?: { comments?: Array<JiraComment | string> };
   remoteLinks?: JiraRemoteLink[];
+  /**
+   * Jira dev-status summary, injected by the "GitLab for Jira Cloud" plugin.
+   * Contains a JSON string (possibly prefixed with `json=`) encoding per-repo
+   * counts of branches, commits, and pull-requests.
+   */
+  customfield_10000?: string;
 }
 
 export interface RawJiraIssue extends JiraFields {
@@ -161,6 +167,52 @@ export class AcliClient {
 /* Normalization helpers                                                       */
 /* -------------------------------------------------------------------------- */
 
+/* --- Jira dev-status / GitLab hint ---------------------------------------- */
+
+interface DevInfoCount {
+  count?: number;
+}
+
+interface DevInfoCachedValue {
+  summary?: {
+    repository?: DevInfoCount;
+    pullrequest?: DevInfoCount;
+    branch?: DevInfoCount;
+    commit?: DevInfoCount;
+  };
+}
+
+interface DevInfo {
+  cachedValue?: DevInfoCachedValue;
+}
+
+/**
+ * Parses `customfield_10000` (Jira dev-status summary injected by the
+ * "GitLab for Jira Cloud" plugin) and returns whether the issue has any
+ * associated GitLab artifacts. Returns `undefined` when the field is absent or
+ * unparseable so callers treat the result as "unknown".
+ */
+function parseDevInfoHint(raw: string | undefined): boolean | undefined {
+  if (!raw) return undefined;
+  try {
+    const idx = raw.indexOf('json=');
+    const jsonStr = idx >= 0 ? raw.slice(idx + 5) : raw;
+    const data = JSON.parse(jsonStr) as DevInfo;
+    const s = data?.cachedValue?.summary;
+    if (!s) return undefined;
+    const total =
+      (s.repository?.count ?? 0) +
+      (s.pullrequest?.count ?? 0) +
+      (s.branch?.count ?? 0) +
+      (s.commit?.count ?? 0);
+    return total > 0;
+  } catch {
+    return undefined;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+
 function firstDefined<T>(...values: Array<T | undefined | null>): T | undefined {
   for (const v of values) {
     if (v !== undefined && v !== null && v !== '') return v;
@@ -239,6 +291,8 @@ export function normalizeIssue(raw: RawJiraIssue, requestedKey?: string): Normal
   const mentionText = [descriptionText, ...comments].join('\n');
   const mentions = extractJiraKeys(mentionText).filter((k) => k !== key);
 
+  const hasGitlabData = parseDevInfoHint(firstDefined(fields.customfield_10000));
+
   return {
     key: typeof key === 'string' ? key : requestedKey,
     type,
@@ -251,6 +305,7 @@ export function normalizeIssue(raw: RawJiraIssue, requestedKey?: string): Normal
     mentions,
     documentation,
     description: descriptionText,
+    hasGitlabData,
   };
 }
 

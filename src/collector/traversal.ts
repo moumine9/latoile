@@ -73,7 +73,8 @@ export async function traverse(
     const id = `${from}|${to}|${relation}|${linkType || ''}`;
     if (relationSeen.has(id)) return;
     relationSeen.add(id);
-    relations.push(linkType ? { from, to, relation, linkType } : { from, to, relation });
+    const strength: 'strong' | 'weak' = relation === 'mention' ? 'weak' : 'strong';
+    relations.push(linkType ? { from, to, relation, linkType, strength } : { from, to, relation, strength });
   };
 
   // Ensure a placeholder node exists for any key referenced by an edge, so the
@@ -109,6 +110,7 @@ export async function traverse(
       continue;
     }
 
+    log(`Fetching Jira issue ${key}...`);
     const issue = await acli.fetchIssue(key);
     const node = ensureNode(key, depth);
     node.depth = Math.min(node.depth, depth);
@@ -121,15 +123,28 @@ export async function traverse(
 
     Object.assign(node, issue, { resolved: true, depth: node.depth });
 
-    // Enrich with GitLab context (never throws).
-    try {
-      node.gitlab = await glab.fetchForKey(key);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log(`gitlab enrichment failed for ${key}: ${message}`);
-      node.gitlab = { mergeRequests: [] };
+    // Skip GitLab enrichment when Jira's dev-status field confirms there are
+    // no associated branches, commits, or MRs for this issue.
+    if (issue.hasGitlabData !== false) {
+      try {
+        log(`Fetching GitLab data for ${key}...`);
+        node.gitlab = await glab.fetchForKey(key);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        
+        // Extract a shorter error message for the UI
+        let shortMessage = (message.split('—')[0] || message).trim();
+        const colonIdx = shortMessage.lastIndexOf(':');
+        if (colonIdx > 0) {
+          shortMessage = shortMessage.substring(colonIdx + 1).trim();
+        }
+        
+        log(`GitLab data unavailable for ${key} (${shortMessage})`);
+        node.gitlab = { mergeRequests: [] };
+      }
     }
 
+    log(`Processing relations for ${key}...`);
     const neighbors = collectNeighbors(issue);
 
     for (const { key: nKey, relation, linkType } of neighbors) {

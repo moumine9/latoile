@@ -1,6 +1,7 @@
 import { createRunner } from './collector/runner.js';
 import { AcliClient } from './collector/acli.js';
-import { GlabClient } from './collector/glab.js';
+import { JiraHttpClient } from './collector/jira-http.js';
+import { GitlabHttpClient } from './collector/gitlab-http.js';
 import { traverse, type TraverseDeps } from './collector/traversal.js';
 import { buildGraph, buildContext } from './model/graph.js';
 import { config as defaultConfig, type Config } from './config.js';
@@ -31,8 +32,21 @@ export function createClients(config: Config = defaultConfig, log: LogFn = () =>
     timeoutMs: config.cliTimeoutMs,
     log,
   });
-  const acli = new AcliClient({ run, bin: config.acliBin, log });
-  const glab = new GlabClient({ run, bin: config.glabBin, projects: config.gitlabProjects, log });
+
+  // Use the direct Jira HTTP client when credentials are configured — ~15×
+  // faster than acli. Falls back to acli when any credential is missing.
+  const acli =
+    config.jiraUrl && config.jiraEmail && config.jiraToken
+      ? new JiraHttpClient({ baseUrl: config.jiraUrl, email: config.jiraEmail, token: config.jiraToken, log })
+      : new AcliClient({ run, bin: config.acliBin, log });
+
+  const glab = new GitlabHttpClient({
+    projects: config.gitlabProjects,
+    groups: config.gitlabGroups,
+    activeDays: config.gitlabActiveDays,
+    concurrency: config.gitlabConcurrency,
+    log,
+  });
   return { acli, glab };
 }
 
@@ -54,8 +68,9 @@ export async function buildContextGraph(
     log,
   });
 
+  log(`Building graph visualization and context payloads...`);
   return {
-    graph: buildGraph(traversal),
+    graph: buildGraph(traversal, config.jiraBaseUrl),
     context: buildContext(traversal),
   };
 }
