@@ -9,7 +9,8 @@
  * startup (no extra dependency — plain KEY=value parsing).
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 /**
  * Loads a `.env` file from the CWD into `process.env`. Only sets variables
@@ -72,6 +73,12 @@ export interface Config {
   jiraToken: string;
   /** Base URL for Jira (e.g. https://your-domain.atlassian.net) used to construct node links */
   jiraBaseUrl: string;
+  /** Whether the SQLite fetch cache is enabled. */
+  cacheEnabled: boolean;
+  /** Path of the SQLite cache file. */
+  cachePath: string;
+  /** Cache freshness window in milliseconds. */
+  cacheTtlMs: number;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -92,8 +99,8 @@ function listFromEnv(name: string): string[] {
 
 export const config: Config = {
   port: intFromEnv('PORT', 3000),
-  maxDepth: intFromEnv('LATOILE_MAX_DEPTH', 2),
-  maxNodes: intFromEnv('LATOILE_MAX_NODES', 100),
+  maxDepth: intFromEnv('LATOILE_MAX_DEPTH', 1),
+  maxNodes: intFromEnv('LATOILE_MAX_NODES', 50),
   cliDelayMs: intFromEnv('LATOILE_CLI_DELAY_MS', 0),
   cliRetries: intFromEnv('LATOILE_CLI_RETRIES', 2),
   cliTimeoutMs: intFromEnv('LATOILE_CLI_TIMEOUT_MS', 30000),
@@ -114,6 +121,9 @@ export const config: Config = {
   jiraEmail: process.env['LATOILE_JIRA_EMAIL'] || '',
   jiraToken: process.env['LATOILE_JIRA_TOKEN'] || '',
   jiraBaseUrl: process.env.LATOILE_JIRA_BASE_URL || '',
+  cacheEnabled: process.env['LATOILE_CACHE'] !== 'off',
+  cachePath: process.env['LATOILE_CACHE_PATH'] || join(homedir(), '.latoile', 'cache.db'),
+  cacheTtlMs: intFromEnv('LATOILE_CACHE_TTL_MIN', 15) * 60 * 1000,
 };
 
 export default config;

@@ -14,6 +14,8 @@ const publicDir = path.resolve(__dirname, '../../../public');
 export interface GraphRunOptions {
   maxDepth?: number;
   maxNodes?: number;
+  /** Bypass cached reads for this run. */
+  refresh?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -135,6 +137,7 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
       const n = Number.parseInt(maxNodesRaw, 10);
       if (Number.isFinite(n) && n > 0) opts.maxNodes = n;
     }
+    if (req.query.refresh === '1' || req.query.refresh === 'true') opts.refresh = true;
 
     const isSSE = req.headers.accept === 'text/event-stream';
     if (isSSE) {

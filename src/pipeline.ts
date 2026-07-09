@@ -5,6 +5,8 @@ import { GitlabHttpClient } from './collector/gitlab-http.js';
 import { traverse, type TraverseDeps } from './collector/traversal.js';
 import { buildGraph, buildContext } from './model/graph.js';
 import { config as defaultConfig, type Config } from './config.js';
+import { SqliteCacheStore, type CacheStore } from './cache/store.js';
+import { CachedIssueSource, CachedGitlabSource } from './cache/cached-clients.js';
 import type { ContextResult, GraphResult, LogFn } from './types.js';
 
 /** Both payloads produced by a full pipeline run. */
@@ -19,13 +21,34 @@ export interface BuildContextGraphOptions {
   log?: LogFn;
   maxDepth?: number;
   maxNodes?: number;
+  /** Skip cached reads for this run (fresh results are still written back). */
+  refresh?: boolean;
+}
+
+export interface CreateClientsOptions {
+  /** Cache store override — mainly for tests. Defaults to the shared SQLite store. */
+  cache?: CacheStore;
+  refresh?: boolean;
+}
+
+// One store per process: DatabaseSync handles are cheap but there is no reason
+// to reopen the file on every API request.
+let sharedStore: CacheStore | undefined;
+
+function getSharedStore(config: Config): CacheStore {
+  if (!sharedStore) sharedStore = new SqliteCacheStore(config.cachePath);
+  return sharedStore;
 }
 
 /**
  * Builds the collector clients from configuration. Exposed so tests can swap the
  * underlying exec function.
  */
-export function createClients(config: Config = defaultConfig, log: LogFn = () => {}): TraverseDeps {
+export function createClients(
+  config: Config = defaultConfig,
+  log: LogFn = () => {},
+  options: CreateClientsOptions = {}
+): TraverseDeps {
   const run = createRunner({
     delayMs: config.cliDelayMs,
     retries: config.cliRetries,
@@ -47,7 +70,19 @@ export function createClients(config: Config = defaultConfig, log: LogFn = () =>
     concurrency: config.gitlabConcurrency,
     log,
   });
-  return { acli, glab };
+
+  if (!config.cacheEnabled && !options.cache) return { acli, glab };
+
+  const cacheOpts = {
+    store: options.cache ?? getSharedStore(config),
+    ttlMs: config.cacheTtlMs,
+    refresh: options.refresh,
+    log,
+  };
+  return {
+    acli: new CachedIssueSource(acli, cacheOpts),
+    glab: new CachedGitlabSource(glab, cacheOpts),
+  };
 }
 
 /**
@@ -60,7 +95,7 @@ export async function buildContextGraph(
 ): Promise<ContextGraph> {
   const config = options.config || defaultConfig;
   const log = options.log || (() => {});
-  const clients = options.clients || createClients(config, log);
+  const clients = options.clients || createClients(config, log, { refresh: options.refresh });
 
   const traversal = await traverse(entryKey, clients, {
     maxDepth: options.maxDepth ?? config.maxDepth,
