@@ -73,8 +73,23 @@ test('traverse visits each issue once and records typed relations', async () => 
   assert.ok(rel('JIRA-1', 'JIRA-2', 'subtask'));
   assert.ok(rel('JIRA-1', 'JIRA-9', 'link'));
   assert.ok(rel('JIRA-1', 'JIRA-5', 'mention'));
-  // Siblings derived from shared parent EPIC-1.
-  assert.ok(rel('JIRA-1', 'JIRA-3', 'sibling') || rel('JIRA-3', 'JIRA-1', 'sibling'));
+  // EPIC-1 is a node in the graph, so its parent/subtask edges already convey
+  // siblinghood — no redundant sibling clique is emitted.
+  assert.equal(result.relations.filter((r) => r.relation === 'sibling').length, 0);
+});
+
+test('siblings are emitted once, in sorted order, only when the parent is not a node', async () => {
+  // 'legacy epic' is not a valid Jira key, so it never becomes a graph node,
+  // but both children still share it as parentKey.
+  const fixture: Record<string, FixtureIssue> = {
+    'JIRA-1': { title: 'Entry', parentKey: 'legacy epic', mentions: ['JIRA-4'] },
+    'JIRA-4': { title: 'Other child', parentKey: 'legacy epic' },
+  };
+  const { acli, glab } = makeClients(fixture);
+  const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 2, maxNodes: 100 });
+
+  const siblings = result.relations.filter((r) => r.relation === 'sibling');
+  assert.deepEqual(siblings, [{ from: 'JIRA-1', to: 'JIRA-4', relation: 'sibling', strength: 'strong' }]);
 });
 
 test('traverse respects maxDepth (records edge, does not fetch beyond)', async () => {

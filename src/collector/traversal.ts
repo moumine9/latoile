@@ -54,7 +54,7 @@ export async function traverse(
   { acli, glab }: TraverseDeps,
   options: TraverseOptions = {}
 ): Promise<TraversalResult> {
-  const { maxDepth = 2, maxNodes = 100, log = () => {} } = options;
+  const { maxDepth = 1, maxNodes = 50, log = () => {} } = options;
 
   if (!isJiraKey(entryKey)) {
     throw new Error(`Invalid entry Jira key: ${entryKey}`);
@@ -199,6 +199,11 @@ function collectNeighbors(issue: NormalizedIssue): Neighbor[] {
 /**
  * Derives sibling relationships: two issues are siblings when they share the
  * same parent. Parents are known both from `parentKey` and `subtasks` arrays.
+ *
+ * Sibling edges are only emitted when the shared parent is NOT a node in the
+ * graph: when it is, the parent/subtask edges already convey the relationship,
+ * and a full sibling clique grows quadratically with family size (a 20-child
+ * epic would add 380 edges). Each pair is emitted once, in sorted key order.
  */
 function deriveSiblings(issues: Map<string, IssueNode>, addRelation: AddRelation): void {
   const childrenByParent = new Map<string, Set<string>>();
@@ -217,15 +222,15 @@ function deriveSiblings(issues: Map<string, IssueNode>, addRelation: AddRelation
     for (const st of node.subtasks || []) register(node.key, st);
   }
 
-  for (const children of childrenByParent.values()) {
-    const list = [...children];
+  for (const [parent, children] of childrenByParent) {
+    if (issues.has(parent)) continue;
+    const list = [...children].sort();
     for (let i = 0; i < list.length; i += 1) {
       for (let j = i + 1; j < list.length; j += 1) {
         const a = list[i];
         const b = list[j];
         if (a === undefined || b === undefined) continue;
         addRelation(a, b, 'sibling');
-        addRelation(b, a, 'sibling');
       }
     }
   }
