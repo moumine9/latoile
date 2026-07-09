@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/src/api/server.js",
   "bin": {
-    "latoile": "dist/src/cli.js"
+    "latoile": "dist/src/cli.js",
+    "latoile-mcp": "dist/src/mcp/server.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
@@ -17,13 +18,17 @@
     "pregraph": "tsc -p tsconfig.json",
     "graph": "node dist/src/cli.js",
     "pretest": "tsc -p tsconfig.json",
-    "test": "node --test dist/test/*.test.js"
+    "test": "node --test dist/test/*.test.js",
+    "premcp": "tsc -p tsconfig.json",
+    "mcp": "node dist/src/mcp/server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^4.19.2",
+    "zod": "^4.4.3"
   },
   "license": "MIT",
   "devDependencies": {
