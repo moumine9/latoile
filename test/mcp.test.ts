@@ -6,7 +6,7 @@ import type { NormalizedIssue } from '../src/types.js';
 
 const CONTEXT: ContextGraph = {
   graph: { entry: 'PV2-1', stats: { fetched: 1, total: 1, capped: false, maxDepthReached: false, maxDepth: 1, maxNodes: 50, nodes: 0, edges: 0 }, nodes: [], edges: [] },
-  context: { entry: 'PV2-1', items: [], traceability: { links: [] } },
+  context: { entry: 'PV2-1', items: [], repositories: [], traceability: { links: [] } },
 };
 
 test('getContextTool returns structuredContent matching the text payload', async () => {

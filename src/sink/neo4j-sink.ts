@@ -30,6 +30,7 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT commit_sha IF NOT EXISTS FOR (n:Commit) REQUIRE n.sha IS UNIQUE',
   'CREATE CONSTRAINT person_key IF NOT EXISTS FOR (n:Person) REQUIRE n.key IS UNIQUE',
   'CREATE CONSTRAINT doc_url IF NOT EXISTS FOR (n:Doc) REQUIRE n.url IS UNIQUE',
+  'CREATE CONSTRAINT project_path IF NOT EXISTS FOR (n:Project) REQUIRE n.path IS UNIQUE',
 ];
 
 /**
@@ -175,6 +176,7 @@ export class Neo4jSink implements GraphSink {
         mrs.push({
           issueKey: node.key,
           project,
+          projectId: mr.projectId ?? null,
           iid: mr.iid,
           title: mr.title ?? null,
           state: mr.state ?? null,
@@ -211,6 +213,15 @@ export class Neo4jSink implements GraphSink {
            mr.url = coalesce(m.url, mr.url)
        MERGE (i)-[hr:HAS_MR]->(mr)
        SET hr.last_seen = datetime()
+       // Projects are first-class: work items span several repos
+       // (microservices + microfrontends) and "what else touched this repo"
+       // is a core query.
+       MERGE (proj:Project {path: m.project})
+       ON CREATE SET proj.first_seen = datetime()
+       SET proj.last_seen = datetime(),
+           proj.gitlabId = coalesce(m.projectId, proj.gitlabId)
+       MERGE (mr)-[ip:IN_PROJECT]->(proj)
+       SET ip.last_seen = datetime()
        FOREACH (k IN CASE WHEN m.authorKey IS NULL THEN [] ELSE [m.authorKey] END |
          MERGE (p:Person {key: k})
          ON CREATE SET p.first_seen = datetime()

@@ -55,7 +55,7 @@ test('resolveJiraKeyFromMr throws a clear error when no key exists', async () =>
 test('getContextFromMrTool returns context plus resolved_from block', async () => {
   const stub: MrContextGraph = {
     graph: { entry: 'PV2-1', stats: { fetched: 1, total: 1, capped: false, maxDepthReached: false, maxDepth: 1, maxNodes: 50, nodes: 0, edges: 0 }, nodes: [], edges: [] },
-    context: { entry: 'PV2-1', items: [], traceability: { links: [] } },
+    context: { entry: 'PV2-1', items: [], repositories: [], traceability: { links: [] } },
     resolvedFrom: { key: 'PV2-1', foundIn: 'source_branch', mrTitle: 't', mrProject: 'g/p', mrIid: 3 },
   };
   const result = await getContextFromMrTool({ mrUrl: 'https://gitlab.com/g/p/-/merge_requests/3' }, async () => stub);

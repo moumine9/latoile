@@ -79,6 +79,8 @@ export interface StoredContextItem {
     state?: string;
     url?: string;
   }>;
+  /** Distinct GitLab project paths this work item's MRs live in. */
+  repositories: string[];
   commits: StoredCommit[];
 }
 
@@ -97,9 +99,22 @@ export interface StoredContextResult {
   found: boolean;
   entry?: string;
   items?: StoredContextItem[];
+  /** Union of every item's repositories — the repos involved in this context. */
+  repositories?: string[];
   traceability?: { links: StoredTraceabilityLink[] };
   /** Age of the STALEST resolved issue — safe to compare against a freshness budget. */
   ageSeconds?: number;
+}
+
+export interface ProjectActivityMatch {
+  project: { path: string; gitlabId?: number };
+  issues: Array<{ key: string; title?: string; status?: string }>;
+  mergeRequests: Array<{ iid: number; title?: string; state?: string }>;
+}
+
+export interface ProjectActivityResult {
+  matches: ProjectActivityMatch[];
+  sinceDays: number;
 }
 
 export interface PersonActivityMatch {
@@ -214,17 +229,24 @@ export class KnowledgeGraph {
   /**
    * Reassembles a full context payload (same shape as the live pipeline's
    * `ContextResult`) from stored data: the issue neighborhood up to `maxDepth`
-   * hops over Jira relationships, each issue's MRs and commits, and
-   * traceability links. `ageSeconds` is the age of the *stalest* resolved
+   * hops over Jira relationships (0 = entry issue only), each issue's MRs and
+   * commits, and traceability links, capped at `maxNodes` issues with the
+   * entry always included. `ageSeconds` is the age of the *stalest* resolved
    * issue in the neighborhood, so callers comparing against a freshness
    * budget never serve partially-expired data.
    */
-  async storedContext(entryKey: string, maxDepth = 1): Promise<StoredContextResult> {
-    const depth = Math.min(Math.max(Math.trunc(maxDepth), 1), 5);
+  async storedContext(entryKey: string, maxDepth = 1, maxNodes = 50): Promise<StoredContextResult> {
+    const depth = Math.min(Math.max(Math.trunc(maxDepth), 0), 5);
+    // Variable-length patterns cannot express zero hops, so depth 0 skips the
+    // neighborhood expansion entirely.
+    const neighborhood =
+      depth === 0
+        ? 'WITH entry, [] AS others'
+        : `OPTIONAL MATCH (entry)-[:PARENT_OF|HAS_SUBTASK|LINKS_TO|MENTIONS*..${depth}]-(other:Issue)
+           WITH entry, collect(DISTINCT other) AS others`;
     const rows = await this.deps.query(
       `MATCH (entry:Issue {key: $key})
-       OPTIONAL MATCH (entry)-[:PARENT_OF|HAS_SUBTASK|LINKS_TO|MENTIONS*..${depth}]-(other:Issue)
-       WITH entry, collect(DISTINCT other) AS others
+       ${neighborhood}
        UNWIND [entry] + others AS i
        WITH DISTINCT i
        OPTIONAL MATCH (parent:Issue)-[:PARENT_OF]->(i)
@@ -248,13 +270,26 @@ export class KnowledgeGraph {
       mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string; url?: string; commits: StoredCommit[] }>;
     }
 
+    // Honor the caller's node cap, mirroring the live traversal's maxNodes:
+    // the entry issue always survives the cut.
+    const allRows = rows as unknown as StoredIssueRow[];
+    const entryFirst = [
+      ...allRows.filter((r) => r.issue.key === entryKey),
+      ...allRows.filter((r) => r.issue.key !== entryKey),
+    ].slice(0, Math.max(1, maxNodes));
+
     const items: StoredContextItem[] = [];
     const links: StoredTraceabilityLink[] = [];
+    const allRepositories = new Set<string>();
     let stalest = Number.POSITIVE_INFINITY;
-    for (const raw of rows as unknown as StoredIssueRow[]) {
+    for (const raw of entryFirst) {
       if (!raw.issue.resolved) continue;
       const seen = raw.issue.last_seen ? Date.parse(raw.issue.last_seen) : NaN;
       if (Number.isFinite(seen)) stalest = Math.min(stalest, seen);
+      const repositories = [
+        ...new Set(raw.mergeRequests.map((mr) => mr.project).filter((p): p is string => Boolean(p))),
+      ];
+      for (const repo of repositories) allRepositories.add(repo);
       items.push({
         work_item: {
           id: raw.issue.key,
@@ -271,6 +306,7 @@ export class KnowledgeGraph {
           state: mr.state,
           url: mr.url,
         })),
+        repositories,
         commits: raw.mergeRequests.flatMap((mr) => mr.commits),
       });
       for (const mr of raw.mergeRequests) {
@@ -283,9 +319,30 @@ export class KnowledgeGraph {
       found: true,
       entry: entryKey,
       items,
+      repositories: [...allRepositories].sort(),
       traceability: { links },
       ageSeconds: Number.isFinite(stalest) ? Math.max(0, Math.round((Date.now() - stalest) / 1000)) : undefined,
     };
+  }
+
+  /**
+   * Issues and MRs that touched a GitLab project (path substring,
+   * case-insensitive), newest activity first — "what else changed in this
+   * repo" when planning a fix.
+   */
+  async projectActivity(projectPath: string, sinceDays = 90): Promise<ProjectActivityResult> {
+    const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await this.deps.query(
+      `MATCH (proj:Project) WHERE toLower(proj.path) CONTAINS toLower($path)
+       OPTIONAL MATCH (i:Issue)-[:HAS_MR]->(mr:MergeRequest)-[:IN_PROJECT]->(proj)
+       WHERE mr.last_seen >= datetime($since)
+       WITH proj, collect(DISTINCT i {.key, .title, .status}) AS issues,
+            collect(DISTINCT mr {.iid, .title, .state}) AS mergeRequests
+       RETURN proj {.path, gitlabId: proj.gitlabId} AS project, issues, mergeRequests
+       ORDER BY proj.path`,
+      { path: projectPath, since }
+    );
+    return { matches: rows as unknown as ProjectActivityMatch[], sinceDays };
   }
 
   /** Node/relationship counts and freshness bounds — "how much does laToile remember?". */

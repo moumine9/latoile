@@ -50,6 +50,8 @@ export interface Commit {
 export interface MergeRequest {
   iid: number;
   project: string | undefined;
+  /** Numeric GitLab project id, when the API provided it. */
+  projectId: number | undefined;
   title: string;
   state: string;
   sourceBranch: string | undefined;
@@ -247,6 +249,12 @@ export interface ContextItem {
   work_item: ContextWorkItem;
   gitlab: ContextGitlab | undefined;
   merge_requests: ContextMergeRequestSummary[];
+  /**
+   * Distinct GitLab project paths this work item's MRs live in. Work items
+   * routinely span several repos (microservices + microfrontends); a fix
+   * attempt should consider every repo the original fix touched.
+   */
+  repositories: string[];
   documentation: ContextDoc[];
 }
 
@@ -258,6 +266,8 @@ export interface TraceabilityLink {
 export interface ContextResult {
   entry: string;
   items: ContextItem[];
+  /** Union of every item's repositories — the repos involved in this context. */
+  repositories: string[];
   traceability: { links: TraceabilityLink[] };
 }
 

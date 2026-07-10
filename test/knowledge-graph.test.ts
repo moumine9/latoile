@@ -122,6 +122,60 @@ test('storedContext rebuilds items, links, and stalest-issue age', async () => {
   assert.ok((stored.ageSeconds ?? 0) > 500 && (stored.ageSeconds ?? 0) < 700);
 });
 
+test('storedContext with depth 0 skips the neighborhood expansion', async () => {
+  const { graph, queries } = makeGraph([
+    [{ issue: { key: 'PV2-1', resolved: true, last_seen: new Date().toISOString() }, parentKey: null, mergeRequests: [] }],
+  ] as never);
+  await graph.storedContext('PV2-1', 0);
+  const query = queries[0]?.query ?? '';
+  assert.ok(!query.includes('OPTIONAL MATCH (entry)-[:PARENT_OF'), 'depth 0 must not expand the neighborhood');
+});
+
+test('storedContext aggregates repositories per item and for the context', async () => {
+  const fresh = new Date().toISOString();
+  const { graph } = makeGraph([
+    [
+      {
+        issue: { key: 'PV2-1', resolved: true, last_seen: fresh },
+        parentKey: null,
+        mergeRequests: [
+          { project: 'grp/backend-svc', iid: 1, commits: [] },
+          { project: 'grp/frontend-mfe', iid: 2, commits: [] },
+        ],
+      },
+      {
+        issue: { key: 'PV2-2', resolved: true, last_seen: fresh },
+        parentKey: null,
+        mergeRequests: [{ project: 'grp/backend-svc', iid: 3, commits: [] }],
+      },
+    ],
+  ] as never);
+  const stored = await graph.storedContext('PV2-1', 1);
+  assert.deepEqual(stored.items?.[0]?.repositories, ['grp/backend-svc', 'grp/frontend-mfe']);
+  assert.deepEqual(stored.repositories, ['grp/backend-svc', 'grp/frontend-mfe']);
+});
+
+test('projectActivity matches project paths case-insensitively', async () => {
+  const { graph, queries } = makeGraph([
+    [{ project: { path: 'grp/fee-matrix', gitlabId: 42 }, issues: [{ key: 'PV2-9' }], mergeRequests: [{ iid: 637 }] }],
+  ] as never);
+  const result = await graph.projectActivity('Fee-Matrix', 30);
+  assert.equal(result.matches[0]?.project.path, 'grp/fee-matrix');
+  assert.match(queries[0]?.query ?? '', /IN_PROJECT/);
+  assert.equal(queries[0]?.params.path, 'Fee-Matrix');
+});
+
+test('storedContext caps items at maxNodes with the entry always kept', async () => {
+  const fresh = new Date().toISOString();
+  const row = (key: string) => ({ issue: { key, resolved: true, last_seen: fresh }, parentKey: null, mergeRequests: [] });
+  // Entry deliberately last in the result rows to prove it survives the cut.
+  const { graph } = makeGraph([[row('PV2-2'), row('PV2-3'), row('PV2-4'), row('PV2-1')]] as never);
+  const stored = await graph.storedContext('PV2-1', 1, 2);
+  const keys = stored.items?.map((i) => i.work_item.id);
+  assert.equal(keys?.length, 2);
+  assert.equal(keys?.[0], 'PV2-1');
+});
+
 test('getContextTool serves fresh stored context without running the pipeline', async () => {
   const fresh = new Date(Date.now() - 30_000).toISOString();
   const { graph } = makeGraph([
@@ -151,7 +205,7 @@ test('getContextTool falls back to live when stored data is too old', async () =
   ] as never);
   const live = {
     graph: { entry: 'PV2-1', stats: { fetched: 1, total: 1, capped: false, maxDepthReached: false, maxDepth: 1, maxNodes: 50, nodes: 0, edges: 0 }, nodes: [], edges: [] },
-    context: { entry: 'PV2-1', items: [], traceability: { links: [] } },
+    context: { entry: 'PV2-1', items: [], repositories: [], traceability: { links: [] } },
   };
   const result = await getContextTool({ jiraKey: 'PV2-1', maxAgeSeconds: 60 }, async () => live, undefined, graph);
   const structured = result.structuredContent as { source: string };

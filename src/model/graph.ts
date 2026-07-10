@@ -172,10 +172,16 @@ export function buildContext(traversal: TraversalResult): ContextResult {
   const issues = traversal.issues;
 
   const items: ContextItem[] = [];
+  // Work items routinely span several repos (microservices + microfrontends);
+  // surfacing the distinct repos per item and for the whole context lets a
+  // fix attempt consider every repo the original fix touched.
+  const allRepositories = new Set<string>();
   for (const issue of issues.values()) {
     if (!issue.resolved) continue;
     const mrs = issue.gitlab?.mergeRequests || [];
     const primary = mrs[0];
+    const repositories = [...new Set(mrs.map((mr) => mr.project).filter((p): p is string => Boolean(p)))];
+    for (const repo of repositories) allRepositories.add(repo);
     items.push({
       work_item: {
         id: issue.key,
@@ -216,6 +222,7 @@ export function buildContext(traversal: TraversalResult): ContextResult {
         state: mr.state,
         url: mr.url,
       })),
+      repositories,
       documentation: (issue.documentation || []).map((d) => ({
         source: d.source,
         title: d.title,
@@ -232,7 +239,7 @@ export function buildContext(traversal: TraversalResult): ContextResult {
     }
   }
 
-  return { entry: traversal.entry, items, traceability: { links } };
+  return { entry: traversal.entry, items, repositories: [...allRepositories].sort(), traceability: { links } };
 }
 
 export default buildGraph;

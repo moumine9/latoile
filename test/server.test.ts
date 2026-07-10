@@ -46,7 +46,7 @@ function portOf(server: Server): number {
 }
 
 function emptyContext(entry: string): ContextResult {
-  return { entry, items: [], traceability: { links: [] } };
+  return { entry, items: [], repositories: [], traceability: { links: [] } };
 }
 
 function jiraGraph(entry: string): GraphResult {
@@ -115,9 +115,11 @@ test('GET /api/graph/:key?view=context returns context payload', async () => {
             },
             gitlab: undefined,
             merge_requests: [],
+            repositories: [],
             documentation: [],
           },
         ],
+        repositories: [],
         traceability: { links: [] },
       },
     }),

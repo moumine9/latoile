@@ -9,8 +9,9 @@ export interface RawMergeRequest {
   iid?: number;
   id?: number;
   references?: { full?: string };
+  project_id?: number;
   project_path?: string;
-  project?: { path_with_namespace?: string };
+  project?: { id?: number; path_with_namespace?: string };
   title?: string;
   state?: string;
   source_branch?: string;
@@ -288,9 +289,11 @@ export function normalizeMergeRequest(
     item.project?.path_with_namespace,
     fallbackProject
   );
+  const projectId = firstDefined(item.project_id, item.project?.id);
 
   return {
     iid,
+    projectId,
     project: typeof project === 'string' ? project : undefined,
     title: item.title ?? '',
     state: item.state ?? 'unknown',
