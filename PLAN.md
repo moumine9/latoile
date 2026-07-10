@@ -25,6 +25,11 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 
 ## Session 2026-07-10
 
+- **Person identity re-schema** (user-reported dupes: kvervilleparis/"Karianne Verville-Paris", jsroy/jroy): `:Person` merges on a canonical key — first-name initials (one per hyphenated part) + last name (`src/sink/person-identity.ts`, `PERSON_SCHEMA_VERSION` migration drops old-keyed nodes). Properties: `name`, `jiraName`, `gitlabUsername`. Verified live post-migration (schemaVersion 2 nodes only).
+- **Incremental refresh (phase 3a, first step)**: `get_context(maxAgeSeconds)` serves from `KnowledgeGraph.storedContext` when the stalest resolved issue in the stored neighborhood is fresh enough; result carries `source: 'live' | 'knowledge_graph'` + `ageSeconds`. Strongly-typed read layer (StoredContextResult, PersonActivityResult, GraphStatsResult…). Verified live: PV2-17892 answered from the graph in ~1s vs minutes live.
+- **MCP server lifecycle**: the process now exits when the client disconnects — stdin EOF triggers a shutdown that first drains in-flight tool calls, then closes the Neo4j read handle and sink (their sockets otherwise keep the process alive).
+- **ESLint added** (`yarn lint`): flat config, latest JS + typescript-eslint recommended, `no-explicit-any` as error. `typescript` pinned to 5.9 — typescript-eslint cannot parse with the TS 7 native preview.
+
 - **Neo4j phase 1 (ingest)**: `GraphSink` interface + `Neo4jSink` (batched MERGE upserts, first_seen/last_seen, constraints, siblings skipped, unresolved placeholders persisted with `resolved: false`), fire-safe pipeline hook, `LATOILE_NEO4J_*` config, docker-compose (container `latoile-neo4j`, image neo4j:2026.05.0, data at `D:\DockerVolumes\neo4j`), `test/sink.test.ts` with fake Cypher runner. Phase 2 (MCP query tools) next — see PLAN-NEO4J.md.
 
 - **MR entry point** (`src/collector/mr-entry.ts`, `buildContextGraphFromMr` in pipeline, MCP tool `get_context_from_mr`): a GitLab MR URL resolves to its Jira key (source branch → title → description) and runs the normal traversal; result includes a `resolved_from` block. Verified live: Prescription!6606 → PV2-17818 (source branch). UI: pasting an MR link in the entry field resolves it via `GET /api/resolve-mr` and loads the graph (verified in browser).
