@@ -227,11 +227,13 @@ and JSON export, and double-clicking a node opens it in Jira or GitLab (set
 Beyond the per-issue context object, latoile emits a graph payload
 (`{ nodes, edges }`) for visualization:
 
-- **Node types**: `jira`, `merge_request`, `branch`, `commit`, `doc`.
+- **Node types**: `jira`, `merge_request`, `doc`. Branches and commits are not
+  separate nodes: the MR node carries `sourceBranch`, `commitCount`, and the
+  `commits` list (shown in the UI details panel).
 - **Edge types**: `parent`, `subtask`, `sibling`, `link` (typed), `mention`
-  (Jira ↔ Jira); `has_mr` (Jira → MR); `has_branch`, `has_commit`
-  (MR → branch/commit); `documented_by` (Jira → doc). The valid source/target
-  types per edge are declared in `EDGE_SCHEMA` (`src/model/graph.ts`).
+  (Jira ↔ Jira); `has_mr` (Jira → MR); `documented_by` (Jira → doc). The valid
+  source/target types per edge are declared in `EDGE_SCHEMA`
+  (`src/model/graph.ts`).
 - Every edge carries a `strength`: `strong` for structural Jira links,
   `weak` for text mentions. Consumers can filter on it.
 - The entry-point node is flagged (`isEntry`) and highlighted in the frontend;

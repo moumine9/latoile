@@ -18,6 +18,10 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 - **Sibling clique fix**: sibling edges were emitted in both directions for every pair of children of a shared parent (PV2-17903: 834 of 902 edges were siblings). Now emitted once per pair (sorted) and only when the shared parent is not a graph node. PV2-17903 is down to 31 edges.
 - **Defaults tightened**: `maxDepth` 2 → 1, `maxNodes` 100 → 50 (config, traversal, README, MCP schema).
 - **Idea (user)**: support a GitLab MR URL as entry point — resolve MR, extract the Jira key from title/branch, run the normal traversal.
+- **Search UX**: 8 results ordered by update, match highlighting, ↑/↓/Enter/Escape keyboard nav, click/Enter loads directly, recent lookups (localStorage) on empty-field focus.
+- **Viz**: edge colors by type, neighborhood fade on tap, degree-based Jira node sizing, legend shows per-type node counts and hides absent types.
+- **Graph slimming**: branch and commit nodes removed — folded into the MR node (`sourceBranch`, `commitCount`, `commits[]` with URLs) and shown in the details panel; `has_branch`/`has_commit` dropped from `EDGE_SCHEMA`. PV2-17892: 41→12 nodes.
+- **Prefs persisted** (localStorage): theme, depth, nodes; stale 2/100 fallbacks in HTML/JS fixed to 1/50.
 
 # Previous session (2026-07-08)
 
