@@ -33,12 +33,98 @@ export interface ConnectionResult {
   relationships: string[];
 }
 
+/** Issue fields as stored on a `:Issue` node. */
+export interface StoredIssue {
+  key: string;
+  title?: string;
+  type?: string;
+  status?: string;
+  assignee?: string;
+  resolved?: boolean;
+  first_seen?: string;
+  last_seen?: string;
+}
+
+/** One edge from an issue to any neighboring node, as seen from the issue. */
+export interface StoredNeighbor {
+  relation: string;
+  direction: 'out' | 'in';
+  label: string;
+  id: string;
+  title: string | null;
+}
+
 export interface KnownContextResult {
   found: boolean;
-  issue?: Record<string, unknown>;
-  neighbors?: Array<Record<string, unknown>>;
+  issue?: StoredIssue;
+  neighbors?: StoredNeighbor[];
   /** Seconds since this issue was last refreshed from live sources. */
   ageSeconds?: number;
+}
+
+/** Mirrors the live pipeline's ContextItem, rebuilt from stored data. */
+export interface StoredContextItem {
+  work_item: {
+    id: string;
+    type?: string;
+    title?: string;
+    status?: string;
+    assignee?: string;
+    parent_id?: string;
+  };
+  merge_requests: Array<{
+    id: number;
+    project?: string;
+    title?: string;
+    state?: string;
+    url?: string;
+  }>;
+  commits: StoredCommit[];
+}
+
+export interface StoredCommit {
+  sha: string;
+  title?: string;
+  timestamp?: string;
+}
+
+export interface StoredTraceabilityLink {
+  jira_key: string;
+  merge_request_id: number;
+}
+
+export interface StoredContextResult {
+  found: boolean;
+  entry?: string;
+  items?: StoredContextItem[];
+  traceability?: { links: StoredTraceabilityLink[] };
+  /** Age of the STALEST resolved issue — safe to compare against a freshness budget. */
+  ageSeconds?: number;
+}
+
+export interface PersonActivityMatch {
+  person: { key: string; name?: string; jiraName?: string; gitlabUsername?: string };
+  issues: Array<{ key: string; title?: string; status?: string }>;
+  mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string }>;
+  commitCount: number;
+}
+
+export interface PersonActivityResult {
+  matches: PersonActivityMatch[];
+  sinceDays: number;
+}
+
+export interface GraphStatsResult {
+  nodes: Array<{ label: string; count: number; oldest_first_seen: string | null; newest_last_seen: string | null }>;
+  relationships: Array<{ type: string; count: number }>;
+}
+
+/** Whole seconds elapsed since an ISO datetime; undefined when unparsable. */
+function secondsSince(isoDate: string | undefined): number | undefined {
+  if (!isoDate) return undefined;
+  const ms = Date.parse(isoDate);
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.max(0, Math.round((Date.now() - ms) / 1000));
 }
 
 export class KnowledgeGraph {
@@ -89,15 +175,14 @@ export class KnowledgeGraph {
     );
     const row = rows[0];
     if (!row) return { found: false };
-    const issue = row.issue as Record<string, unknown>;
-    const lastSeen = typeof issue['last_seen'] === 'string' ? Date.parse(issue['last_seen']) : NaN;
+    const issue = row.issue as StoredIssue;
     return {
       found: true,
       issue,
-      neighbors: (row.neighbors as Array<Record<string, unknown> | null>).filter(
-        (n): n is Record<string, unknown> => n !== null
+      neighbors: (row.neighbors as Array<StoredNeighbor | null>).filter(
+        (n): n is StoredNeighbor => n !== null
       ),
-      ageSeconds: Number.isFinite(lastSeen) ? Math.max(0, Math.round((Date.now() - lastSeen) / 1000)) : undefined,
+      ageSeconds: secondsSince(issue.last_seen),
     };
   }
 
@@ -106,7 +191,7 @@ export class KnowledgeGraph {
    * identity: canonical key, display name, Jira name, or GitLab username
    * (case/accent-insensitive substring).
    */
-  async personActivity(name: string, sinceDays = 90): Promise<Record<string, unknown>> {
+  async personActivity(name: string, sinceDays = 90): Promise<PersonActivityResult> {
     const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
     const rows = await this.deps.query(
       `MATCH (p:Person)
@@ -123,11 +208,88 @@ export class KnowledgeGraph {
               issues, mergeRequests, count(DISTINCT c) AS commitCount`,
       { name, normalized: normalizePersonToken(name), since }
     );
-    return { matches: rows, sinceDays };
+    return { matches: rows as unknown as PersonActivityMatch[], sinceDays };
+  }
+
+  /**
+   * Reassembles a full context payload (same shape as the live pipeline's
+   * `ContextResult`) from stored data: the issue neighborhood up to `maxDepth`
+   * hops over Jira relationships, each issue's MRs and commits, and
+   * traceability links. `ageSeconds` is the age of the *stalest* resolved
+   * issue in the neighborhood, so callers comparing against a freshness
+   * budget never serve partially-expired data.
+   */
+  async storedContext(entryKey: string, maxDepth = 1): Promise<StoredContextResult> {
+    const depth = Math.min(Math.max(Math.trunc(maxDepth), 1), 5);
+    const rows = await this.deps.query(
+      `MATCH (entry:Issue {key: $key})
+       OPTIONAL MATCH (entry)-[:PARENT_OF|HAS_SUBTASK|LINKS_TO|MENTIONS*..${depth}]-(other:Issue)
+       WITH entry, collect(DISTINCT other) AS others
+       UNWIND [entry] + others AS i
+       WITH DISTINCT i
+       OPTIONAL MATCH (parent:Issue)-[:PARENT_OF]->(i)
+       OPTIONAL MATCH (i)-[:HAS_MR]->(mr:MergeRequest)
+       OPTIONAL MATCH (mr)-[:HAS_COMMIT]->(c:Commit)
+       WITH i, parent, mr, collect(c {.sha, .title, .timestamp}) AS commits
+       WITH i, parent, collect(CASE WHEN mr IS NULL THEN NULL ELSE
+         mr {.project, .iid, .title, .state, .sourceBranch, .targetBranch, .url, commits: commits}
+       END) AS mrs
+       RETURN i {.key, .title, .type, .status, .assignee, .resolved,
+                 last_seen: toString(i.last_seen)} AS issue,
+              parent.key AS parentKey,
+              [m IN mrs WHERE m IS NOT NULL] AS mergeRequests`,
+      { key: entryKey }
+    );
+    if (rows.length === 0) return { found: false };
+
+    interface StoredIssueRow {
+      issue: StoredIssue;
+      parentKey: string | null;
+      mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string; url?: string; commits: StoredCommit[] }>;
+    }
+
+    const items: StoredContextItem[] = [];
+    const links: StoredTraceabilityLink[] = [];
+    let stalest = Number.POSITIVE_INFINITY;
+    for (const raw of rows as unknown as StoredIssueRow[]) {
+      if (!raw.issue.resolved) continue;
+      const seen = raw.issue.last_seen ? Date.parse(raw.issue.last_seen) : NaN;
+      if (Number.isFinite(seen)) stalest = Math.min(stalest, seen);
+      items.push({
+        work_item: {
+          id: raw.issue.key,
+          type: raw.issue.type,
+          title: raw.issue.title,
+          status: raw.issue.status,
+          assignee: raw.issue.assignee,
+          parent_id: raw.parentKey ?? undefined,
+        },
+        merge_requests: raw.mergeRequests.map((mr) => ({
+          id: mr.iid,
+          project: mr.project,
+          title: mr.title,
+          state: mr.state,
+          url: mr.url,
+        })),
+        commits: raw.mergeRequests.flatMap((mr) => mr.commits),
+      });
+      for (const mr of raw.mergeRequests) {
+        links.push({ jira_key: raw.issue.key, merge_request_id: mr.iid });
+      }
+    }
+    if (items.length === 0) return { found: false };
+
+    return {
+      found: true,
+      entry: entryKey,
+      items,
+      traceability: { links },
+      ageSeconds: Number.isFinite(stalest) ? Math.max(0, Math.round((Date.now() - stalest) / 1000)) : undefined,
+    };
   }
 
   /** Node/relationship counts and freshness bounds — "how much does laToile remember?". */
-  async stats(): Promise<Record<string, unknown>> {
+  async stats(): Promise<GraphStatsResult> {
     const nodes = await this.deps.query(
       `MATCH (n)
        RETURN labels(n)[0] AS label, count(n) AS count,
@@ -140,7 +302,10 @@ export class KnowledgeGraph {
       `MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS count ORDER BY type`,
       {}
     );
-    return { nodes, relationships };
+    return {
+      nodes: nodes as unknown as GraphStatsResult['nodes'],
+      relationships: relationships as unknown as GraphStatsResult['relationships'],
+    };
   }
 
   async close(): Promise<void> {

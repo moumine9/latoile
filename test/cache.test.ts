@@ -128,7 +128,7 @@ test('getContextTool returns the context payload as JSON text', async () => {
   });
   assert.equal(result.isError, undefined);
   assert.ok(result.content[0]);
-  assert.deepEqual(JSON.parse(result.content[0].text), context);
+  assert.deepEqual(JSON.parse(result.content[0].text), { ...context, source: 'live' });
 });
 
 test('getContextTool surfaces pipeline failures as tool errors', async () => {

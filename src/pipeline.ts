@@ -51,6 +51,13 @@ function getSharedSink(config: Config, log: LogFn): Promise<GraphSink | undefine
   return sharedSinkPromise;
 }
 
+/** Closes the shared knowledge-graph sink (idempotent); used on shutdown. */
+export async function closeSharedSink(): Promise<void> {
+  const sink = await sharedSinkPromise;
+  sharedSinkPromise = undefined;
+  await sink?.close();
+}
+
 export interface CreateClientsOptions {
   /** Cache store override — mainly for tests. Defaults to the shared SQLite store. */
   cache?: CacheStore;

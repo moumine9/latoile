@@ -21,6 +21,7 @@ import { z } from 'zod';
 import {
   buildContextGraph,
   buildContextGraphFromMr,
+  closeSharedSink,
   createClients,
   type BuildContextGraphOptions,
   type ContextGraph,
@@ -43,6 +44,8 @@ export interface GetContextArgs {
   maxDepth?: number;
   maxNodes?: number;
   refresh?: boolean;
+  /** Serve from the knowledge graph when its data is at most this old. */
+  maxAgeSeconds?: number;
 }
 
 /** Result shape of an MCP tool callback. */
@@ -58,10 +61,12 @@ function errorResult(message: string): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-function okResult(payload: Record<string, unknown>): ToolResult {
+function okResult(payload: object): ToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
-    structuredContent: payload,
+    // Boundary cast: the MCP SDK wants an index-signature object; our payloads
+    // are strongly-typed domain results.
+    structuredContent: payload as Record<string, unknown>,
   };
 }
 
@@ -72,12 +77,34 @@ function okResult(payload: Record<string, unknown>): ToolResult {
 export async function getContextTool(
   args: GetContextArgs,
   run: PipelineFn = buildContextGraph,
-  onProgress?: ProgressFn
+  onProgress?: ProgressFn,
+  graph?: KnowledgeGraph
 ): Promise<ToolResult> {
   const key = args.jiraKey.trim().toUpperCase();
   if (!isJiraKey(key)) {
     return errorResult(`"${args.jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`);
   }
+
+  // Incremental refresh: fresh-enough stored data short-circuits the live
+  // traversal entirely. Any failure here falls through to the live path.
+  if (args.maxAgeSeconds !== undefined && !args.refresh) {
+    try {
+      const kg = graph ?? (await getSharedKnowledgeGraph());
+      const stored = kg ? await kg.storedContext(key, args.maxDepth) : undefined;
+      if (stored?.found && stored.ageSeconds !== undefined && stored.ageSeconds <= args.maxAgeSeconds) {
+        return okResult({
+          entry: stored.entry,
+          items: stored.items,
+          traceability: stored.traceability,
+          ageSeconds: stored.ageSeconds,
+          source: 'knowledge_graph',
+        });
+      }
+    } catch (err) {
+      console.error(`[latoile] stored-context lookup failed, falling back to live: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   let step = 0;
   try {
     const { context } = await run(key, {
@@ -90,7 +117,7 @@ export async function getContextTool(
         onProgress?.(msg, step);
       },
     });
-    return okResult({ ...context });
+    return okResult({ ...context, source: 'live' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return errorResult(`latoile pipeline failed: ${message}`);
@@ -181,6 +208,27 @@ export async function getIssueTool(jiraKey: string, fetcher?: IssueFetcher): Pro
 
 const looseObject = (): ReturnType<typeof z.looseObject> => z.looseObject({});
 
+/* ------------------------------ lifecycle --------------------------------- */
+
+// One-shot clients close stdin right after writing their request; shutdown
+// must wait for in-flight tool calls so their responses still go out.
+let inflightToolCalls = 0;
+
+async function tracked(work: Promise<ToolResult>): Promise<ToolResult> {
+  inflightToolCalls += 1;
+  try {
+    return await work;
+  } finally {
+    inflightToolCalls -= 1;
+  }
+}
+
+async function waitForInflightToolCalls(): Promise<void> {
+  while (inflightToolCalls > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /* ------------------------- knowledge-graph tools -------------------------- */
 
 const KG_UNCONFIGURED =
@@ -209,7 +257,14 @@ function getSharedKnowledgeGraph(): Promise<KnowledgeGraph | undefined> {
   return sharedGraphPromise;
 }
 
-type KgHandler = (graph: KnowledgeGraph) => Promise<Record<string, unknown>>;
+/** Closes the shared Neo4j read handle (idempotent); used on shutdown. */
+export async function closeSharedKnowledgeGraph(): Promise<void> {
+  const kg = await sharedGraphPromise;
+  sharedGraphPromise = undefined;
+  await kg?.close();
+}
+
+type KgHandler = (graph: KnowledgeGraph) => Promise<object>;
 
 /** Shared wrapper: not-configured error, structured result, error mapping. */
 export async function withKnowledgeGraph(
@@ -279,23 +334,33 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         '(parent, subtasks, siblings, links, mentions) and enriches each issue with GitLab ' +
         'merge requests, branches, and commits. Returns a normalized JSON payload designed ' +
         'for LLM consumption. Results are served from a short-TTL cache; pass refresh=true ' +
-        'to force live fetches. Progress is streamed via MCP progress notifications when a ' +
-        'progressToken is provided.',
+        'to force live fetches, or maxAgeSeconds to answer instantly from the knowledge ' +
+        'graph when its stored data is fresh enough (source: "knowledge_graph" in the ' +
+        'result). Progress is streamed via MCP progress notifications when a progressToken ' +
+        'is provided.',
       inputSchema: {
         jiraKey: z.string().describe('Entry-point Jira issue key, e.g. PV2-17830'),
         maxDepth: z.number().int().min(0).max(5).optional().describe('Traversal depth from the entry issue (default 1)'),
         maxNodes: z.number().int().min(1).max(500).optional().describe('Hard cap on fetched issues (default 50)'),
         refresh: z.boolean().optional().describe('Bypass the cache and fetch everything live'),
+        maxAgeSeconds: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Accept knowledge-graph data at most this old instead of a live traversal (e.g. 3600)'),
       },
       outputSchema: {
         entry: z.string().describe('The entry-point Jira key'),
         items: z.array(looseObject()).describe('One unified work-item object per resolved issue'),
         traceability: looseObject().describe('Jira-key ↔ merge-request link table'),
+        source: z.enum(['live', 'knowledge_graph']).describe('Where this answer came from'),
+        ageSeconds: z.number().optional().describe('Age of the stalest stored issue (knowledge_graph source only)'),
       },
     },
     (args, extra) => {
       const progressToken = extra._meta?.progressToken;
-      return getContextTool(args, run, (message, step) => {
+      return tracked(getContextTool(args, run, (message, step) => {
         sendLog(message);
         if (progressToken !== undefined) {
           void extra
@@ -305,7 +370,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
             })
             .catch(() => {});
         }
-      });
+      }));
     }
   );
 
@@ -339,7 +404,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
     },
     (args, extra) => {
       const progressToken = extra._meta?.progressToken;
-      return getContextFromMrTool(args, buildContextGraphFromMr, (message, step) => {
+      return tracked(getContextFromMrTool(args, buildContextGraphFromMr, (message, step) => {
         sendLog(message);
         if (progressToken !== undefined) {
           void extra
@@ -349,7 +414,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
             })
             .catch(() => {});
         }
-      });
+      }));
     }
   );
 
@@ -375,7 +440,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         ),
       },
     },
-    (args) => searchIssuesTool(args.query, args.limit)
+    (args) => tracked(searchIssuesTool(args.query, args.limit))
   );
 
   server.registerTool(
@@ -395,7 +460,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         status: z.string().optional(),
       },
     },
-    (args) => getIssueTool(args.jiraKey)
+    (args) => tracked(getIssueTool(args.jiraKey))
   );
 
   server.registerTool(
@@ -418,7 +483,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         relationships: z.array(z.string()),
       },
     },
-    (args) => findConnectionTool(args.keyA, args.keyB, args.maxHops)
+    (args) => tracked(findConnectionTool(args.keyA, args.keyB, args.maxHops))
   );
 
   server.registerTool(
@@ -438,7 +503,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         ageSeconds: z.number().optional().describe('Seconds since last live refresh'),
       },
     },
-    (args) => knownContextTool(args.jiraKey)
+    (args) => tracked(knownContextTool(args.jiraKey))
   );
 
   server.registerTool(
@@ -458,7 +523,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         sinceDays: z.number(),
       },
     },
-    (args) => personActivityTool(args.name, args.sinceDays)
+    (args) => tracked(personActivityTool(args.name, args.sinceDays))
   );
 
   server.registerTool(
@@ -474,7 +539,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         relationships: z.array(looseObject()),
       },
     },
-    () => graphStatsTool()
+    () => tracked(graphStatsTool())
   );
 
   return server;
@@ -482,7 +547,19 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
 
 async function main(): Promise<void> {
   const server = createMcpServer();
-  await server.connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  // When the client disconnects (stdin EOF) the Neo4j driver's open sockets
+  // would keep the process alive forever; the SDK transport does not signal
+  // EOF itself, so watch stdin directly. One-shot clients close stdin right
+  // after writing, so drain in-flight tool calls before tearing down.
+  const shutdown = (): void => {
+    void waitForInflightToolCalls()
+      .then(() => Promise.allSettled([server.close(), closeSharedKnowledgeGraph(), closeSharedSink()]))
+      .then(() => process.exit(0));
+  };
+  process.stdin.once('end', shutdown);
+  process.stdin.once('close', shutdown);
   console.error('[latoile] MCP server listening on stdio');
 }
 
