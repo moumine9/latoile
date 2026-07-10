@@ -510,6 +510,10 @@ async function performSearch(query: string): Promise<void> {
   currentSearchAbort = new AbortController();
   
   try {
+    // Clear stale results so keyboard navigation can't select an item from
+    // the previous query while the new search is in flight.
+    searchItems = [];
+    selectedIndex = -1;
     els.searchResults.innerHTML = '<div class="search-result-item"><div class="search-result-summary">Searching...</div></div>';
     els.searchResults.classList.remove('hidden');
     
