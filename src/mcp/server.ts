@@ -28,6 +28,8 @@ import {
 } from '../pipeline.js';
 import { isJiraKey } from '../collector/jiraKeys.js';
 import { searchIssues, type IssueSearchResult } from '../collector/search.js';
+import { config } from '../config.js';
+import type { KnowledgeGraph } from '../sink/knowledge-graph.js';
 import type { NormalizedIssue } from '../types.js';
 
 /** Pipeline runner — injectable so tests can stub the expensive traversal. */
@@ -179,6 +181,82 @@ export async function getIssueTool(jiraKey: string, fetcher?: IssueFetcher): Pro
 
 const looseObject = (): ReturnType<typeof z.looseObject> => z.looseObject({});
 
+/* ------------------------- knowledge-graph tools -------------------------- */
+
+const KG_UNCONFIGURED =
+  'Knowledge graph is not configured. Set LATOILE_NEO4J_URI (and LATOILE_NEO4J_PASSWORD) to enable it — see PLAN-NEO4J.md.';
+
+// One read handle per process, created lazily like the sink.
+let sharedGraphPromise: Promise<KnowledgeGraph | undefined> | undefined;
+
+function getSharedKnowledgeGraph(): Promise<KnowledgeGraph | undefined> {
+  if (!config.neo4jEnabled || !config.neo4jUri) return Promise.resolve(undefined);
+  if (!sharedGraphPromise) {
+    sharedGraphPromise = import('../sink/knowledge-graph.js')
+      .then(({ createKnowledgeGraph }) =>
+        createKnowledgeGraph(
+          { uri: config.neo4jUri, user: config.neo4jUser, password: config.neo4jPassword },
+          (msg) => console.error(`[latoile] ${msg}`)
+        )
+      )
+      .catch((err) => {
+        console.error(`[latoile] knowledge graph connection failed: ${err instanceof Error ? err.message : String(err)}`);
+        // Reset so the next tool call retries instead of caching the failure.
+        sharedGraphPromise = undefined;
+        return undefined;
+      });
+  }
+  return sharedGraphPromise;
+}
+
+type KgHandler = (graph: KnowledgeGraph) => Promise<Record<string, unknown>>;
+
+/** Shared wrapper: not-configured error, structured result, error mapping. */
+export async function withKnowledgeGraph(
+  handler: KgHandler,
+  graph?: KnowledgeGraph
+): Promise<ToolResult> {
+  const kg = graph ?? (await getSharedKnowledgeGraph());
+  if (!kg) return errorResult(KG_UNCONFIGURED);
+  try {
+    return okResult(await handler(kg));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return errorResult(`Knowledge graph query failed: ${message}`);
+  }
+}
+
+export function findConnectionTool(
+  keyA: string,
+  keyB: string,
+  maxHops?: number,
+  graph?: KnowledgeGraph
+): Promise<ToolResult> {
+  const a = keyA.trim().toUpperCase();
+  const b = keyB.trim().toUpperCase();
+  if (!isJiraKey(a) || !isJiraKey(b)) {
+    return Promise.resolve(errorResult('Both arguments must be valid Jira keys (e.g. PV2-17830).'));
+  }
+  return withKnowledgeGraph(async (kg) => ({ ...(await kg.findConnection(a, b, maxHops)) }), graph);
+}
+
+export function knownContextTool(jiraKey: string, graph?: KnowledgeGraph): Promise<ToolResult> {
+  const key = jiraKey.trim().toUpperCase();
+  if (!isJiraKey(key)) {
+    return Promise.resolve(errorResult(`"${jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`));
+  }
+  return withKnowledgeGraph(async (kg) => ({ ...(await kg.knownContext(key)) }), graph);
+}
+
+export function personActivityTool(name: string, sinceDays?: number, graph?: KnowledgeGraph): Promise<ToolResult> {
+  if (!name.trim()) return Promise.resolve(errorResult('Person name must not be empty.'));
+  return withKnowledgeGraph(async (kg) => kg.personActivity(name.trim(), sinceDays), graph);
+}
+
+export function graphStatsTool(graph?: KnowledgeGraph): Promise<ToolResult> {
+  return withKnowledgeGraph(async (kg) => kg.stats(), graph);
+}
+
 export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer {
   const server = new McpServer(
     { name: 'latoile', version: '0.1.0' },
@@ -318,6 +396,85 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
       },
     },
     (args) => getIssueTool(args.jiraKey)
+  );
+
+  server.registerTool(
+    'find_connection',
+    {
+      title: 'Find how two Jira issues are connected',
+      description:
+        'Shortest path between two issues in the accumulated knowledge graph (offline — ' +
+        'no live Jira/GitLab calls). Traverses any relationship: parent chains, links, ' +
+        'mentions, shared MRs, commits, people. Only covers tickets laToile has already ' +
+        'seen; run get_context on a ticket to teach the graph about it.',
+      inputSchema: {
+        keyA: z.string().describe('First Jira key'),
+        keyB: z.string().describe('Second Jira key'),
+        maxHops: z.number().int().min(1).max(15).optional().describe('Path length cap (default 8)'),
+      },
+      outputSchema: {
+        found: z.boolean(),
+        nodes: z.array(looseObject()),
+        relationships: z.array(z.string()),
+      },
+    },
+    (args) => findConnectionTool(args.keyA, args.keyB, args.maxHops)
+  );
+
+  server.registerTool(
+    'known_context',
+    {
+      title: 'What laToile already knows about an issue',
+      description:
+        'Instant, offline snapshot of an issue from the knowledge graph: stored fields, ' +
+        'every known neighbor (issues, MRs, commits, people, docs), and ageSeconds since ' +
+        'the last live refresh. Use it before get_context — if the data is fresh enough, ' +
+        'skip the slow live traversal.',
+      inputSchema: { jiraKey: z.string().describe('Jira issue key') },
+      outputSchema: {
+        found: z.boolean(),
+        issue: looseObject().optional(),
+        neighbors: z.array(looseObject()).optional(),
+        ageSeconds: z.number().optional().describe('Seconds since last live refresh'),
+      },
+    },
+    (args) => knownContextTool(args.jiraKey)
+  );
+
+  server.registerTool(
+    'person_activity',
+    {
+      title: "A person's activity in the knowledge graph",
+      description:
+        'Issues assigned to and MRs/commits authored by a person (case-insensitive name ' +
+        'substring), within a recency window. Useful for "who knows about this area?". ' +
+        'Offline; covers only what laToile has already ingested.',
+      inputSchema: {
+        name: z.string().describe('Person name or fragment, e.g. "alice"'),
+        sinceDays: z.number().int().min(1).max(365).optional().describe('Recency window (default 90)'),
+      },
+      outputSchema: {
+        matches: z.array(looseObject()),
+        sinceDays: z.number(),
+      },
+    },
+    (args) => personActivityTool(args.name, args.sinceDays)
+  );
+
+  server.registerTool(
+    'graph_stats',
+    {
+      title: 'Knowledge graph size and freshness',
+      description:
+        'Node and relationship counts by type plus oldest/newest timestamps — how much ' +
+        'laToile remembers and how fresh it is.',
+      inputSchema: {},
+      outputSchema: {
+        nodes: z.array(looseObject()),
+        relationships: z.array(looseObject()),
+      },
+    },
+    () => graphStatsTool()
   );
 
   return server;
