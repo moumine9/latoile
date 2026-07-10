@@ -227,3 +227,6 @@ yarn-error.log*
 # latoile generated output
 *.graph.json
 out/
+
+# Local Neo4j knowledge-graph data (docker-compose volume)
+.neo4j/

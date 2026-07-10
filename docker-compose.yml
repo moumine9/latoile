@@ -1,0 +1,20 @@
+# Local Neo4j for the latoile knowledge graph (see PLAN-NEO4J.md).
+#
+#   LATOILE_NEO4J_PASSWORD=... docker compose up -d neo4j
+#   Browser UI: http://localhost:7474
+#
+# Then point latoile at it via .env:
+#   LATOILE_NEO4J_URI=bolt://localhost:7687
+#   LATOILE_NEO4J_PASSWORD=<same password>
+services:
+  neo4j:
+    image: neo4j:2026.05.0
+    container_name: latoile-neo4j
+    restart: always
+    ports:
+      - "7474:7474"   # browser UI
+      - "7687:7687"   # bolt
+    environment:
+      NEO4J_AUTH: "neo4j/${LATOILE_NEO4J_PASSWORD:-latoile-dev}"
+    volumes:
+      - D:\DockerVolumes\neo4j:/data

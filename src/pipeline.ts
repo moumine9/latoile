@@ -8,6 +8,7 @@ import { buildGraph, buildContext } from './model/graph.js';
 import { config as defaultConfig, type Config } from './config.js';
 import { SqliteCacheStore, type CacheStore } from './cache/store.js';
 import { CachedIssueSource, CachedGitlabSource } from './cache/cached-clients.js';
+import type { GraphSink } from './sink/graph-sink.js';
 import type { ContextResult, GraphResult, LogFn } from './types.js';
 
 /** Both payloads produced by a full pipeline run. */
@@ -24,6 +25,30 @@ export interface BuildContextGraphOptions {
   maxNodes?: number;
   /** Skip cached reads for this run (fresh results are still written back). */
   refresh?: boolean;
+  /** Knowledge-graph sink override — mainly for tests. `null` disables the sink for this run. */
+  sink?: GraphSink | null;
+}
+
+// One knowledge-graph sink per process, created lazily on first use so the
+// neo4j driver is never loaded when the sink is unconfigured.
+let sharedSinkPromise: Promise<GraphSink | undefined> | undefined;
+
+function getSharedSink(config: Config, log: LogFn): Promise<GraphSink | undefined> {
+  if (!config.neo4jEnabled || !config.neo4jUri) return Promise.resolve(undefined);
+  if (!sharedSinkPromise) {
+    sharedSinkPromise = import('./sink/neo4j-sink.js')
+      .then(({ createNeo4jSink }) =>
+        createNeo4jSink(
+          { uri: config.neo4jUri, user: config.neo4jUser, password: config.neo4jPassword },
+          log
+        )
+      )
+      .catch((err) => {
+        log(`Knowledge graph unavailable (${err instanceof Error ? err.message : String(err)})`);
+        return undefined;
+      });
+  }
+  return sharedSinkPromise;
 }
 
 export interface CreateClientsOptions {
@@ -103,6 +128,16 @@ export async function buildContextGraph(
     maxNodes: options.maxNodes ?? config.maxNodes,
     log,
   });
+
+  // Feed the knowledge graph. Fire-safe: a sink failure never fails the run.
+  const sink = options.sink === null ? undefined : options.sink ?? (await getSharedSink(config, log));
+  if (sink) {
+    try {
+      await sink.ingest(traversal);
+    } catch (err) {
+      log(`Knowledge graph write failed (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
 
   log(`Building graph visualization and context payloads...`);
   return {

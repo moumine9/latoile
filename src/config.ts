@@ -79,6 +79,12 @@ export interface Config {
   cachePath: string;
   /** Cache freshness window in milliseconds. */
   cacheTtlMs: number;
+  /** Neo4j bolt URI for the knowledge-graph sink; empty = sink disabled. */
+  neo4jUri: string;
+  neo4jUser: string;
+  neo4jPassword: string;
+  /** Kill switch for the knowledge-graph sink (LATOILE_NEO4J=off). */
+  neo4jEnabled: boolean;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -124,6 +130,10 @@ export const config: Config = {
   cacheEnabled: process.env['LATOILE_CACHE'] !== 'off',
   cachePath: process.env['LATOILE_CACHE_PATH'] || join(homedir(), '.latoile', 'cache.db'),
   cacheTtlMs: intFromEnv('LATOILE_CACHE_TTL_MIN', 15) * 60 * 1000,
+  neo4jUri: process.env['LATOILE_NEO4J_URI'] || '',
+  neo4jUser: process.env['LATOILE_NEO4J_USER'] || 'neo4j',
+  neo4jPassword: process.env['LATOILE_NEO4J_PASSWORD'] || '',
+  neo4jEnabled: process.env['LATOILE_NEO4J'] !== 'off',
 };
 
 export default config;
