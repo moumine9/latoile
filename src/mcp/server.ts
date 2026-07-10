@@ -6,310 +6,77 @@
  * Register in Claude Code with:
  *   claude mcp add latoile -- node <repo>/dist/src/mcp/server.js
  *
+ * This file only wires tools to the transport; the handlers live in
+ * `handlers.ts`, process lifecycle in `lifecycle.ts` (both re-exported here
+ * for consumers and tests).
+ *
  * Tools (all return structuredContent alongside the JSON text):
- *   get_context(jiraKey, maxDepth?, maxNodes?, refresh?) — full traversal;
+ *   get_context(jiraKey, maxDepth?, maxNodes?, refresh?, maxAgeSeconds?) —
+ *     full traversal, or an instant knowledge-graph answer when fresh enough;
  *     streams pipeline progress as MCP progress notifications when the client
- *     sends a progressToken, and as logging notifications otherwise.
+ *     sends a progressToken, and as logging notifications always.
  *   get_context_from_mr(mrUrl, ...) — same, but entry point is a GitLab MR
  *     link; the Jira key is extracted from the MR's branch/title/description.
  *   search_issues(query, limit?) — JQL full-text search, newest-updated first.
  *   get_issue(jiraKey) — single issue fetch (no traversal, cache-backed).
+ *   find_connection / known_context / person_activity / graph_stats —
+ *     offline queries over the Neo4j knowledge graph.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { buildContextGraph, closeSharedSink } from '../pipeline.js';
 import {
-  buildContextGraph,
-  buildContextGraphFromMr,
-  closeSharedSink,
-  createClients,
-  type BuildContextGraphOptions,
-  type ContextGraph,
-  type MrContextGraph,
-} from '../pipeline.js';
-import { isJiraKey } from '../collector/jiraKeys.js';
-import { searchIssues, type IssueSearchResult } from '../collector/search.js';
-import { config } from '../config.js';
-import type { KnowledgeGraph } from '../sink/knowledge-graph.js';
-import type { NormalizedIssue } from '../types.js';
+  findConnectionTool,
+  getContextFromMrTool,
+  getContextTool,
+  getIssueTool,
+  graphStatsTool,
+  knownContextTool,
+  personActivityTool,
+  projectActivityTool,
+  searchIssuesTool,
+  type PipelineFn,
+  type ProgressFn,
+} from './handlers.js';
+import { closeSharedKnowledgeGraph, tracked, waitForInflightToolCalls } from './lifecycle.js';
 
-/** Pipeline runner — injectable so tests can stub the expensive traversal. */
-export type PipelineFn = (key: string, options: BuildContextGraphOptions) => Promise<ContextGraph>;
-
-/** Receives pipeline progress: a human-readable message and a monotonic step count. */
-export type ProgressFn = (message: string, step: number) => void;
-
-export interface GetContextArgs {
-  jiraKey: string;
-  maxDepth?: number;
-  maxNodes?: number;
-  refresh?: boolean;
-  /** Serve from the knowledge graph when its data is at most this old. */
-  maxAgeSeconds?: number;
-}
-
-/** Result shape of an MCP tool callback. */
-export interface ToolResult {
-  // Index signature required by the SDK's CallToolResult contract.
-  [key: string]: unknown;
-  content: Array<{ type: 'text'; text: string }>;
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
-
-function errorResult(message: string): ToolResult {
-  return { content: [{ type: 'text', text: message }], isError: true };
-}
-
-function okResult(payload: object): ToolResult {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
-    // Boundary cast: the MCP SDK wants an index-signature object; our payloads
-    // are strongly-typed domain results.
-    structuredContent: payload as Record<string, unknown>,
-  };
-}
-
-/**
- * get_context handler, exported separately from the server wiring so it can be
- * unit tested without a transport.
- */
-export async function getContextTool(
-  args: GetContextArgs,
-  run: PipelineFn = buildContextGraph,
-  onProgress?: ProgressFn,
-  graph?: KnowledgeGraph
-): Promise<ToolResult> {
-  const key = args.jiraKey.trim().toUpperCase();
-  if (!isJiraKey(key)) {
-    return errorResult(`"${args.jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`);
-  }
-
-  // Incremental refresh: fresh-enough stored data short-circuits the live
-  // traversal entirely. Any failure here falls through to the live path.
-  if (args.maxAgeSeconds !== undefined && !args.refresh) {
-    try {
-      const kg = graph ?? (await getSharedKnowledgeGraph());
-      const stored = kg ? await kg.storedContext(key, args.maxDepth) : undefined;
-      if (stored?.found && stored.ageSeconds !== undefined && stored.ageSeconds <= args.maxAgeSeconds) {
-        return okResult({
-          entry: stored.entry,
-          items: stored.items,
-          traceability: stored.traceability,
-          ageSeconds: stored.ageSeconds,
-          source: 'knowledge_graph',
-        });
-      }
-    } catch (err) {
-      console.error(`[latoile] stored-context lookup failed, falling back to live: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  let step = 0;
-  try {
-    const { context } = await run(key, {
-      maxDepth: args.maxDepth,
-      maxNodes: args.maxNodes,
-      refresh: args.refresh,
-      log: (msg) => {
-        step += 1;
-        console.error(`[latoile] ${msg}`);
-        onProgress?.(msg, step);
-      },
-    });
-    return okResult({ ...context, source: 'live' });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return errorResult(`latoile pipeline failed: ${message}`);
-  }
-}
-
-/** Pipeline runner for MR entry points — injectable for tests. */
-export type MrPipelineFn = (mrUrl: string, options: BuildContextGraphOptions) => Promise<MrContextGraph>;
-
-export interface GetContextFromMrArgs {
-  mrUrl: string;
-  maxDepth?: number;
-  maxNodes?: number;
-  refresh?: boolean;
-}
-
-/** get_context_from_mr handler. */
-export async function getContextFromMrTool(
-  args: GetContextFromMrArgs,
-  run: MrPipelineFn = buildContextGraphFromMr,
-  onProgress?: ProgressFn
-): Promise<ToolResult> {
-  let step = 0;
-  try {
-    const { context, resolvedFrom } = await run(args.mrUrl, {
-      maxDepth: args.maxDepth,
-      maxNodes: args.maxNodes,
-      refresh: args.refresh,
-      log: (msg) => {
-        step += 1;
-        console.error(`[latoile] ${msg}`);
-        onProgress?.(msg, step);
-      },
-    });
-    return okResult({
-      ...context,
-      resolved_from: {
-        jira_key: resolvedFrom.key,
-        found_in: resolvedFrom.foundIn,
-        mr_iid: resolvedFrom.mrIid,
-        mr_project: resolvedFrom.mrProject,
-        mr_title: resolvedFrom.mrTitle,
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return errorResult(`latoile MR resolution failed: ${message}`);
-  }
-}
-
-/** search_issues handler. */
-export async function searchIssuesTool(
-  query: string,
-  limit: number | undefined,
-  search: typeof searchIssues = searchIssues
-): Promise<ToolResult> {
-  if (!query.trim()) return errorResult('Search query must not be empty.');
-  try {
-    const results: IssueSearchResult[] = await search(query, { limit });
-    return okResult({ results });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return errorResult(`Jira search failed: ${message}`);
-  }
-}
-
-/** Minimal issue source contract needed by get_issue; matches the traversal's. */
-export interface IssueFetcher {
-  fetchIssue(key: string): Promise<NormalizedIssue | null>;
-}
-
-/** get_issue handler. */
-export async function getIssueTool(jiraKey: string, fetcher?: IssueFetcher): Promise<ToolResult> {
-  const key = jiraKey.trim().toUpperCase();
-  if (!isJiraKey(key)) {
-    return errorResult(`"${jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`);
-  }
-  try {
-    const source = fetcher ?? createClients(undefined, (msg) => console.error(`[latoile] ${msg}`)).acli;
-    const issue = await source.fetchIssue(key);
-    if (!issue) return errorResult(`${key} was not found or is not accessible.`);
-    return okResult({ ...issue });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return errorResult(`Jira fetch failed: ${message}`);
-  }
-}
+// Re-exports keep the public/test surface stable across the module split.
+export * from './handlers.js';
+export * from './lifecycle.js';
+export * from './tool-result.js';
 
 const looseObject = (): ReturnType<typeof z.looseObject> => z.looseObject({});
 
-/* ------------------------------ lifecycle --------------------------------- */
-
-// One-shot clients close stdin right after writing their request; shutdown
-// must wait for in-flight tool calls so their responses still go out.
-let inflightToolCalls = 0;
-
-async function tracked(work: Promise<ToolResult>): Promise<ToolResult> {
-  inflightToolCalls += 1;
-  try {
-    return await work;
-  } finally {
-    inflightToolCalls -= 1;
-  }
+/** Extra argument shape shared by the tool callbacks below. */
+interface ToolCallExtra {
+  _meta?: { progressToken?: string | number };
+  sendNotification(notification: {
+    method: 'notifications/progress';
+    params: { progressToken: string | number; progress: number; message: string };
+  }): Promise<void>;
 }
 
-async function waitForInflightToolCalls(): Promise<void> {
-  while (inflightToolCalls > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-
-/* ------------------------- knowledge-graph tools -------------------------- */
-
-const KG_UNCONFIGURED =
-  'Knowledge graph is not configured. Set LATOILE_NEO4J_URI (and LATOILE_NEO4J_PASSWORD) to enable it — see PLAN-NEO4J.md.';
-
-// One read handle per process, created lazily like the sink.
-let sharedGraphPromise: Promise<KnowledgeGraph | undefined> | undefined;
-
-function getSharedKnowledgeGraph(): Promise<KnowledgeGraph | undefined> {
-  if (!config.neo4jEnabled || !config.neo4jUri) return Promise.resolve(undefined);
-  if (!sharedGraphPromise) {
-    sharedGraphPromise = import('../sink/knowledge-graph.js')
-      .then(({ createKnowledgeGraph }) =>
-        createKnowledgeGraph(
-          { uri: config.neo4jUri, user: config.neo4jUser, password: config.neo4jPassword },
-          (msg) => console.error(`[latoile] ${msg}`)
-        )
-      )
-      .catch((err) => {
-        console.error(`[latoile] knowledge graph connection failed: ${err instanceof Error ? err.message : String(err)}`);
-        // Reset so the next tool call retries instead of caching the failure.
-        sharedGraphPromise = undefined;
-        return undefined;
-      });
-  }
-  return sharedGraphPromise;
-}
-
-/** Closes the shared Neo4j read handle (idempotent); used on shutdown. */
-export async function closeSharedKnowledgeGraph(): Promise<void> {
-  const kg = await sharedGraphPromise;
-  sharedGraphPromise = undefined;
-  await kg?.close();
-}
-
-type KgHandler = (graph: KnowledgeGraph) => Promise<object>;
-
-/** Shared wrapper: not-configured error, structured result, error mapping. */
-export async function withKnowledgeGraph(
-  handler: KgHandler,
-  graph?: KnowledgeGraph
-): Promise<ToolResult> {
-  const kg = graph ?? (await getSharedKnowledgeGraph());
-  if (!kg) return errorResult(KG_UNCONFIGURED);
-  try {
-    return okResult(await handler(kg));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return errorResult(`Knowledge graph query failed: ${message}`);
-  }
-}
-
-export function findConnectionTool(
-  keyA: string,
-  keyB: string,
-  maxHops?: number,
-  graph?: KnowledgeGraph
-): Promise<ToolResult> {
-  const a = keyA.trim().toUpperCase();
-  const b = keyB.trim().toUpperCase();
-  if (!isJiraKey(a) || !isJiraKey(b)) {
-    return Promise.resolve(errorResult('Both arguments must be valid Jira keys (e.g. PV2-17830).'));
-  }
-  return withKnowledgeGraph(async (kg) => ({ ...(await kg.findConnection(a, b, maxHops)) }), graph);
-}
-
-export function knownContextTool(jiraKey: string, graph?: KnowledgeGraph): Promise<ToolResult> {
-  const key = jiraKey.trim().toUpperCase();
-  if (!isJiraKey(key)) {
-    return Promise.resolve(errorResult(`"${jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`));
-  }
-  return withKnowledgeGraph(async (kg) => ({ ...(await kg.knownContext(key)) }), graph);
-}
-
-export function personActivityTool(name: string, sinceDays?: number, graph?: KnowledgeGraph): Promise<ToolResult> {
-  if (!name.trim()) return Promise.resolve(errorResult('Person name must not be empty.'));
-  return withKnowledgeGraph(async (kg) => kg.personActivity(name.trim(), sinceDays), graph);
-}
-
-export function graphStatsTool(graph?: KnowledgeGraph): Promise<ToolResult> {
-  return withKnowledgeGraph(async (kg) => kg.stats(), graph);
+/**
+ * Builds the ProgressFn for a tool call: every pipeline log line becomes an
+ * MCP logging notification, plus a progress notification when the client
+ * asked for one via progressToken.
+ */
+function progressReporter(server: McpServer, extra: ToolCallExtra): ProgressFn {
+  const progressToken = extra._meta?.progressToken;
+  return (message, step) => {
+    void server.server
+      .sendLoggingMessage({ level: 'info', logger: 'latoile', data: message })
+      .catch(() => {});
+    if (progressToken !== undefined) {
+      void extra
+        .sendNotification({
+          method: 'notifications/progress',
+          params: { progressToken, progress: step, message },
+        })
+        .catch(() => {});
+    }
+  };
 }
 
 export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer {
@@ -317,13 +84,6 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
     { name: 'latoile', version: '0.1.0' },
     { capabilities: { logging: {} } }
   );
-
-  /** Forwards a pipeline log line to the client as a logging notification. */
-  const sendLog = (message: string): void => {
-    void server.server
-      .sendLoggingMessage({ level: 'info', logger: 'latoile', data: message })
-      .catch(() => {});
-  };
 
   server.registerTool(
     'get_context',
@@ -353,25 +113,15 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
       outputSchema: {
         entry: z.string().describe('The entry-point Jira key'),
         items: z.array(looseObject()).describe('One unified work-item object per resolved issue'),
+        repositories: z
+          .array(z.string())
+          .describe('Every GitLab project touched in this context — a fix should consider all of them'),
         traceability: looseObject().describe('Jira-key ↔ merge-request link table'),
         source: z.enum(['live', 'knowledge_graph']).describe('Where this answer came from'),
         ageSeconds: z.number().optional().describe('Age of the stalest stored issue (knowledge_graph source only)'),
       },
     },
-    (args, extra) => {
-      const progressToken = extra._meta?.progressToken;
-      return tracked(getContextTool(args, run, (message, step) => {
-        sendLog(message);
-        if (progressToken !== undefined) {
-          void extra
-            .sendNotification({
-              method: 'notifications/progress',
-              params: { progressToken, progress: step, message },
-            })
-            .catch(() => {});
-        }
-      }));
-    }
+    (args, extra) => tracked(getContextTool(args, run, progressReporter(server, extra)))
   );
 
   server.registerTool(
@@ -402,20 +152,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         traceability: looseObject().describe('Jira-key ↔ merge-request link table'),
       },
     },
-    (args, extra) => {
-      const progressToken = extra._meta?.progressToken;
-      return tracked(getContextFromMrTool(args, buildContextGraphFromMr, (message, step) => {
-        sendLog(message);
-        if (progressToken !== undefined) {
-          void extra
-            .sendNotification({
-              method: 'notifications/progress',
-              params: { progressToken, progress: step, message },
-            })
-            .catch(() => {});
-        }
-      }));
-    }
+    (args, extra) => tracked(getContextFromMrTool(args, undefined, progressReporter(server, extra)))
   );
 
   server.registerTool(
@@ -524,6 +261,29 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
       },
     },
     (args) => tracked(personActivityTool(args.name, args.sinceDays))
+  );
+
+  server.registerTool(
+    'project_activity',
+    {
+      title: 'Issues and MRs that touched a GitLab project',
+      description:
+        'What else changed in a repo: issues and merge requests whose work landed in a ' +
+        'GitLab project (path substring, case-insensitive), within a recency window. ' +
+        'Work items here span several repos (microservices + microfrontends), so before ' +
+        'attempting a fix, check which repos the original fix touched (repositories field ' +
+        'of get_context) and what else recently changed in each. Offline; covers only ' +
+        'what laToile has already ingested.',
+      inputSchema: {
+        projectPath: z.string().describe('GitLab project path or fragment, e.g. "fee-matrix"'),
+        sinceDays: z.number().int().min(1).max(365).optional().describe('Recency window (default 90)'),
+      },
+      outputSchema: {
+        matches: z.array(looseObject()),
+        sinceDays: z.number(),
+      },
+    },
+    (args) => tracked(projectActivityTool(args.projectPath, args.sinceDays))
   );
 
   server.registerTool(
