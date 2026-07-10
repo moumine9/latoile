@@ -107,6 +107,9 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `LATOILE_CACHE` | `on` | Set to `off` to disable the SQLite fetch cache |
 | `LATOILE_CACHE_PATH` | `~/.latoile/cache.db` | Cache file location |
 | `LATOILE_CACHE_TTL_MIN` | `15` | Cache freshness window in minutes |
+| `LATOILE_NEO4J_URI` | _(empty)_ | e.g. `bolt://localhost:7687`; enables the knowledge-graph sink |
+| `LATOILE_NEO4J_USER` / `LATOILE_NEO4J_PASSWORD` | `neo4j` / _(empty)_ | Neo4j credentials |
+| `LATOILE_NEO4J` | `on` | Set to `off` to disable the knowledge-graph sink |
 
 A `.env` file in the project root (gitignored) is loaded at startup; shell
 exports win over `.env` values. Set at least `LATOILE_GITLAB_GROUPS` or
@@ -121,6 +124,18 @@ dependency). Entries expire after `LATOILE_CACHE_TTL_MIN` minutes; repeat
 lookups within the window are near-instant. `?refresh=1` (API) or
 `refresh: true` (pipeline/MCP) forces live fetches while still updating the
 cache. Failed Jira lookups are never cached.
+
+### Knowledge graph (Neo4j)
+
+Beyond the per-request cache, latoile can *remember everything it has seen*:
+every traversal upserts its issues, MRs, commits, people, and doc links into a
+local Neo4j database with `first_seen`/`last_seen` timestamps, so coverage
+accumulates across runs and becomes queryable across tickets (Cypher via the
+Neo4j browser at http://localhost:7474). Start the database with
+`docker compose up -d neo4j` and set `LATOILE_NEO4J_URI` +
+`LATOILE_NEO4J_PASSWORD` in `.env`. Without configuration the feature is
+simply off; if the database is down, runs proceed and log a warning. Design
+and roadmap (query tools, incremental refresh): [PLAN-NEO4J.md](PLAN-NEO4J.md).
 
 ### MCP server
 
@@ -140,6 +155,14 @@ Three tools are exposed, all returning structured content:
 | `get_context_from_mr(mrUrl, …)` | Same, from a GitLab MR link — the Jira key is extracted from the MR's source branch, title, or description (`resolved_from` block says which) |
 | `search_issues(query, limit?)` | JQL full-text search, newest-updated first — find the key when only a topic is known |
 | `get_issue(jiraKey)` | Single issue (status, parent, subtasks, links…), no traversal — fast and cache-backed |
+| `find_connection(keyA, keyB)` | Shortest path between two issues in the knowledge graph (offline) |
+| `known_context(jiraKey)` | What the knowledge graph already knows: stored fields, neighbors, `ageSeconds` freshness |
+| `person_activity(name, sinceDays?)` | Issues assigned / MRs+commits authored by a person (offline) |
+| `graph_stats()` | Knowledge-graph size and freshness by node/relationship type |
+
+The last four query the Neo4j knowledge graph and need `LATOILE_NEO4J_URI`
+configured; they answer instantly from accumulated data, without live
+Jira/GitLab calls.
 
 `get_context` streams pipeline progress as MCP progress notifications when the
 client provides a `progressToken`, and always as logging notifications.

@@ -25,6 +25,8 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 
 ## Session 2026-07-10
 
+- **Neo4j phase 1 (ingest)**: `GraphSink` interface + `Neo4jSink` (batched MERGE upserts, first_seen/last_seen, constraints, siblings skipped, unresolved placeholders persisted with `resolved: false`), fire-safe pipeline hook, `LATOILE_NEO4J_*` config, docker-compose (container `latoile-neo4j`, image neo4j:2026.05.0, data at `D:\DockerVolumes\neo4j`), `test/sink.test.ts` with fake Cypher runner. Phase 2 (MCP query tools) next — see PLAN-NEO4J.md.
+
 - **MR entry point** (`src/collector/mr-entry.ts`, `buildContextGraphFromMr` in pipeline, MCP tool `get_context_from_mr`): a GitLab MR URL resolves to its Jira key (source branch → title → description) and runs the normal traversal; result includes a `resolved_from` block. Verified live: Prescription!6606 → PV2-17818 (source branch). UI: pasting an MR link in the entry field resolves it via `GET /api/resolve-mr` and loads the graph (verified in browser).
 - **MCP server extended** (`src/mcp/server.ts`): three tools — `get_context`, `search_issues` (JQL search extracted to `src/collector/search.ts`, shared with `/api/search`), `get_issue` (single fetch, cache-backed, no traversal). All tools return `structuredContent` + output schemas; pipeline logs stream as MCP logging notifications and as progress notifications when the client sends a `progressToken`. Verified over real stdio: 158 progress notifications on a PV2-17892 run. Tests in `test/mcp.test.ts` (43 total pass).
 

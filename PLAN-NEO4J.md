@@ -94,13 +94,13 @@ traverse the stale frontier (incremental refresh — the real speed prize).
 
 ## Phases
 
-1. **Ingest (core, ~1 session).** GraphSink interface, Neo4jSink with batched
+1. **Ingest (core, ~1 session).** — ✅ done 2026-07-10 (`src/sink/`, pipeline hook, config, docker-compose, `test/sink.test.ts`). GraphSink interface, Neo4jSink with batched
    upserts + constraints, pipeline hook, config, docker-compose, unit tests
    with a fake driver session (assert generated Cypher + params), README/CLAUDE
    docs. Exit criterion: run `get_context` on a few tickets, open Neo4j
    browser, see the accumulated graph; re-running updates `last_seen` without
    duplicating.
-2. **Query tools (~1 session).** The four MCP tools above + tests (fake
+2. **Query tools (~1 session).** — ✅ done 2026-07-10 (`src/sink/knowledge-graph.ts`, four MCP tools, `test/knowledge-graph.test.ts`). The four MCP tools above + tests (fake
    driver). Exit criterion: `find_connection` between two tickets that share
    only an old epic returns the path without any live Jira call.
 3. **Freshness & enrichment (later, design first).**
