@@ -70,7 +70,8 @@ Every request runs the collector against `acli` and the GitLab API on demand.
 | `GET /api/graph/:key` | Renderable graph `{ nodes, edges }` (default) |
 | `GET /api/graph/:key?view=context` | Normalized LLM context payload |
 | `GET /api/graph/:key?view=full` | Both graph and context |
-| `GET /api/search?q=text` | Jira text search (top 5 matches, for the UI autocomplete) |
+| `GET /api/search?q=text` | Jira text search (top 8 matches, for the UI autocomplete) |
+| `GET /api/resolve-mr?url=…` | Resolves a GitLab MR link to its Jira key (paste-a-link flow) |
 | `GET /api/health` | Liveness probe |
 
 Query params: `maxDepth` (traversal depth), `maxNodes` (node cap), and
@@ -131,10 +132,20 @@ yarn build:server
 claude mcp add latoile -- node /path/to/latoile/dist/src/mcp/server.js
 ```
 
-The `get_context` tool takes `jiraKey` (plus optional `maxDepth`, `maxNodes`,
-`refresh`) and returns the normalized LLM context payload. Configuration comes
-from the same environment / `.env` as the server, resolved from the working
-directory the MCP server is started in. Run it manually with `yarn mcp`.
+Three tools are exposed, all returning structured content:
+
+| Tool | Purpose |
+| --- | --- |
+| `get_context(jiraKey, maxDepth?, maxNodes?, refresh?)` | Full traversal → normalized LLM context payload |
+| `get_context_from_mr(mrUrl, …)` | Same, from a GitLab MR link — the Jira key is extracted from the MR's source branch, title, or description (`resolved_from` block says which) |
+| `search_issues(query, limit?)` | JQL full-text search, newest-updated first — find the key when only a topic is known |
+| `get_issue(jiraKey)` | Single issue (status, parent, subtasks, links…), no traversal — fast and cache-backed |
+
+`get_context` streams pipeline progress as MCP progress notifications when the
+client provides a `progressToken`, and always as logging notifications.
+Configuration comes from the same environment / `.env` as the server, resolved
+from the working directory the MCP server is started in. Run it manually with
+`yarn mcp`.
 
 ### Project layout
 

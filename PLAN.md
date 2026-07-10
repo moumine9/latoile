@@ -7,7 +7,7 @@ Updated: 2026-07-09.
 laToile should be *alive*: a persistent, ever-growing knowledge graph that remembers every ticket/MR/commit it has ever seen and can be queried across tickets — not just a per-request visualization. Target architecture:
 
 - **Fetch cache (done)**: SQLite behind the `CacheStore` interface — speed only, short TTL, no graph semantics.
-- **Knowledge graph (next)**: a Neo4j-backed persistence layer. Every traversal upserts its nodes/edges (with timestamps) into the graph, so coverage accumulates over time. Enables Cypher queries like "what connects PV2-17818 to PV2-16002" or "all issues whose MRs touched file X". Design note: add a `GraphSink` hook in `pipeline.ts` that receives the `TraversalResult` after each run; Neo4j is one implementation.
+- **Knowledge graph (next)**: a Neo4j-backed persistence layer. Every traversal upserts its nodes/edges (with timestamps) into the graph, so coverage accumulates over time. Enables Cypher queries like "what connects PV2-17818 to PV2-16002" or "all issues whose MRs touched file X". Full design in [PLAN-NEO4J.md](PLAN-NEO4J.md) (GraphSink hook in `pipeline.ts`, data model, MCP query tools, phased rollout).
 - **Query surface (done)**: the MCP server. Future tools should query the knowledge graph directly (fast, offline) and fall back to live traversal on cache miss.
 
 ## Session 2026-07-09
@@ -22,6 +22,11 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 - **Viz**: edge colors by type, neighborhood fade on tap, degree-based Jira node sizing, legend shows per-type node counts and hides absent types.
 - **Graph slimming**: branch and commit nodes removed — folded into the MR node (`sourceBranch`, `commitCount`, `commits[]` with URLs) and shown in the details panel; `has_branch`/`has_commit` dropped from `EDGE_SCHEMA`. PV2-17892: 41→12 nodes.
 - **Prefs persisted** (localStorage): theme, depth, nodes; stale 2/100 fallbacks in HTML/JS fixed to 1/50.
+
+## Session 2026-07-10
+
+- **MR entry point** (`src/collector/mr-entry.ts`, `buildContextGraphFromMr` in pipeline, MCP tool `get_context_from_mr`): a GitLab MR URL resolves to its Jira key (source branch → title → description) and runs the normal traversal; result includes a `resolved_from` block. Verified live: Prescription!6606 → PV2-17818 (source branch). UI: pasting an MR link in the entry field resolves it via `GET /api/resolve-mr` and loads the graph (verified in browser).
+- **MCP server extended** (`src/mcp/server.ts`): three tools — `get_context`, `search_issues` (JQL search extracted to `src/collector/search.ts`, shared with `/api/search`), `get_issue` (single fetch, cache-backed, no traversal). All tools return `structuredContent` + output schemas; pipeline logs stream as MCP logging notifications and as progress notifications when the client sends a `progressToken`. Verified over real stdio: 158 progress notifications on a PV2-17892 run. Tests in `test/mcp.test.ts` (43 total pass).
 
 # Previous session (2026-07-08)
 
