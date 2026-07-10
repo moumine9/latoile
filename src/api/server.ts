@@ -174,7 +174,6 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
 export function start(port: number = config.port): Server {
   const app = createApp();
   return app.listen(port, () => {
-    // eslint-disable-next-line no-console
     console.log(`latoile backend listening on http://localhost:${port}`);
   });
 }

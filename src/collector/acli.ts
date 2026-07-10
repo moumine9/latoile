@@ -142,7 +142,7 @@ export class AcliClient {
       return JSON.parse(stdout) as RawJiraIssue;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to parse acli JSON for ${key}: ${message}`);
+      throw new Error(`Failed to parse acli JSON for ${key}: ${message}`, { cause: err });
     }
   }
 
