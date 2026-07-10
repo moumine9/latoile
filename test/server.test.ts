@@ -222,3 +222,45 @@ test('GET /api/search returns [] for an empty query without invoking acli', asyn
     server.close();
   }
 });
+
+test('/api/resolve-mr resolves via the injected resolver and validates input', async () => {
+  const app = createApp({
+    resolveMr: async (url) => {
+      assert.match(url, /merge_requests\/42/);
+      return { key: 'PV2-7', foundIn: 'source_branch', mrTitle: 'T', mrProject: 'g/p', mrIid: 42 };
+    },
+  });
+  const server = await listen(app);
+  try {
+    const base = `http://127.0.0.1:${portOf(server)}`;
+    const ok = await fetch(`${base}/api/resolve-mr?url=${encodeURIComponent('https://gitlab.com/g/p/-/merge_requests/42')}`);
+    assert.equal(ok.status, 200);
+    const body = (await ok.json()) as { key: string; mrIid: number };
+    assert.equal(body.key, 'PV2-7');
+    assert.equal(body.mrIid, 42);
+
+    const missing = await fetch(`${base}/api/resolve-mr`);
+    assert.equal(missing.status, 400);
+    const notMr = await fetch(`${base}/api/resolve-mr?url=${encodeURIComponent('https://gitlab.com/g/p/-/issues/1')}`);
+    assert.equal(notMr.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('/api/resolve-mr surfaces resolution failures as 422', async () => {
+  const app = createApp({
+    resolveMr: async () => {
+      throw new Error('No Jira key found in MR !42');
+    },
+  });
+  const server = await listen(app);
+  try {
+    const res = await fetch(`http://127.0.0.1:${portOf(server)}/api/resolve-mr?url=${encodeURIComponent('https://gitlab.com/g/p/-/merge_requests/42')}`);
+    assert.equal(res.status, 422);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /No Jira key found/);
+  } finally {
+    server.close();
+  }
+});

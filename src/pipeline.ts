@@ -3,6 +3,7 @@ import { AcliClient } from './collector/acli.js';
 import { JiraHttpClient } from './collector/jira-http.js';
 import { GitlabHttpClient } from './collector/gitlab-http.js';
 import { traverse, type TraverseDeps } from './collector/traversal.js';
+import { parseMrUrl, resolveJiraKeyFromMr, type MrApiSource, type ResolvedMrEntry } from './collector/mr-entry.js';
 import { buildGraph, buildContext } from './model/graph.js';
 import { config as defaultConfig, type Config } from './config.js';
 import { SqliteCacheStore, type CacheStore } from './cache/store.js';
@@ -108,6 +109,34 @@ export async function buildContextGraph(
     graph: buildGraph(traversal, config.jiraBaseUrl),
     context: buildContext(traversal),
   };
+}
+
+/** ContextGraph plus how the MR entry point was resolved to a Jira key. */
+export interface MrContextGraph extends ContextGraph {
+  resolvedFrom: ResolvedMrEntry;
+}
+
+/**
+ * Runs the pipeline starting from a GitLab merge-request URL: fetches the MR,
+ * extracts its Jira key (source branch → title → description), then traverses
+ * from that key as usual.
+ */
+export async function buildContextGraphFromMr(
+  mrUrl: string,
+  options: BuildContextGraphOptions = {},
+  mrSource?: MrApiSource
+): Promise<MrContextGraph> {
+  const log = options.log || (() => {});
+  const parsed = parseMrUrl(mrUrl);
+  if (!parsed) {
+    throw new Error(
+      `Not a GitLab merge request URL: ${mrUrl} (expected https://<host>/<group>/<project>/-/merge_requests/<iid>)`
+    );
+  }
+  const source = mrSource ?? new GitlabHttpClient({ host: parsed.host, log });
+  const resolved = await resolveJiraKeyFromMr(parsed, source, log);
+  const result = await buildContextGraph(resolved.key, options);
+  return { ...result, resolvedFrom: resolved };
 }
 
 export default buildContextGraph;

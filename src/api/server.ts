@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
 import { buildContextGraph, type ContextGraph } from '../pipeline.js';
 import { isJiraKey } from '../collector/jiraKeys.js';
+import { searchIssues, type SearchRunFn } from '../collector/search.js';
+import { parseMrUrl, resolveJiraKeyFromMr, type ResolvedMrEntry } from '../collector/mr-entry.js';
 import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,43 +24,24 @@ export interface GraphRunOptions {
 /** Runs the pipeline for a key; injectable so the server can be tested. */
 export type GraphRunFn = (key: string, opts: GraphRunOptions) => Promise<ContextGraph>;
 
-/** Executes an acli invocation for the search endpoint; injectable for tests. */
-export type SearchRunFn = (bin: string, args: string[]) => Promise<string>;
+export type { SearchRunFn } from '../collector/search.js';
+// Re-exported for existing consumers/tests; implementation lives in collector/search.ts.
+export { escapeJqlString } from '../collector/search.js';
+
+/** Resolves an MR URL to its Jira key; injectable for tests. */
+export type ResolveMrFn = (url: string) => Promise<ResolvedMrEntry>;
 
 export interface CreateAppOptions {
   run?: GraphRunFn;
   searchRun?: SearchRunFn;
+  resolveMr?: ResolveMrFn;
 }
 
-/** Shape of one row of `acli jira workitem search --json` that we consume. */
-interface RawSearchResult {
-  key?: string;
-  fields?: {
-    summary?: string;
-    issuetype?: { name?: string };
-  };
-}
-
-/**
- * Escapes a user string for interpolation inside a double-quoted JQL string
- * literal. Backslashes first, then quotes, so a trailing `\` cannot swallow
- * the closing quote. Control characters are dropped.
- */
-export function escapeJqlString(value: string): string {
-  return value
-    .replace(/[\p{Cc}]/gu, '')
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"');
-}
-
-async function defaultSearchRun(bin: string, args: string[]): Promise<string> {
-  const { createRunner } = await import('../collector/runner.js');
-  const r = createRunner({
-    delayMs: config.cliDelayMs,
-    retries: config.cliRetries,
-    timeoutMs: config.cliTimeoutMs,
-  });
-  return r(bin, args);
+async function defaultResolveMr(url: string): Promise<ResolvedMrEntry> {
+  const parsed = parseMrUrl(url);
+  if (!parsed) throw new Error('Not a GitLab merge request URL');
+  const { GitlabHttpClient } = await import('../collector/gitlab-http.js');
+  return resolveJiraKeyFromMr(parsed, new GitlabHttpClient({ host: parsed.host }));
 }
 
 /**
@@ -82,34 +65,38 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
     }
 
     try {
-      const searchRun: SearchRunFn = options.searchRun || defaultSearchRun;
-      const escaped = escapeJqlString(q.trim());
-      const jql = `(text ~ "${escaped}" OR summary ~ "${escaped}") ORDER BY updated DESC`;
-      const stdout = await searchRun(config.acliBin, [
-        'jira', 'workitem', 'search',
-        '--jql', jql,
-        '--limit', '8',
-        '--fields', 'key,summary,issuetype',
-        '--json',
-      ]);
-      if (!stdout) {
-        res.json([]);
-        return;
-      }
-
-      const parsed: RawSearchResult[] = JSON.parse(stdout) as RawSearchResult[];
-      const results = Array.isArray(parsed) ? parsed : [];
-      const mapped = results
-        .filter((r) => typeof r.key === 'string')
-        .map((r) => ({
-          key: r.key,
-          summary: r.fields?.summary || '',
-          type: r.fields?.issuetype?.name || '',
-        }));
-      res.json(mapped);
+      const results = await searchIssues(q, { searchRun: options.searchRun });
+      res.json(results);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: message });
+    }
+  });
+
+  /** Resolves a GitLab MR URL to its Jira key for the UI's paste-a-link flow. */
+  app.get('/api/resolve-mr', async (req: Request, res: Response) => {
+    const url = req.query.url;
+    if (typeof url !== 'string' || url.trim() === '') {
+      res.status(400).json({ error: 'Missing url parameter' });
+      return;
+    }
+    if (!parseMrUrl(url)) {
+      res.status(400).json({ error: 'Not a GitLab merge request URL' });
+      return;
+    }
+    try {
+      const resolve = options.resolveMr || defaultResolveMr;
+      const resolved = await resolve(url);
+      res.json({
+        key: resolved.key,
+        foundIn: resolved.foundIn,
+        mrIid: resolved.mrIid,
+        mrProject: resolved.mrProject,
+        mrTitle: resolved.mrTitle,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(422).json({ error: message });
     }
   });
 
