@@ -133,6 +133,16 @@ export interface JiraGraphNode {
   url?: string;
 }
 
+/** Commit reference carried on the MR graph node (commits are not nodes). */
+export interface GraphCommitRef {
+  sha: string;
+  shortSha: string;
+  title: string;
+  author: string | undefined;
+  timestamp: string | undefined;
+  url?: string;
+}
+
 export interface MergeRequestGraphNode {
   id: string;
   type: 'merge_request';
@@ -144,24 +154,9 @@ export interface MergeRequestGraphNode {
   targetBranch: string | undefined;
   url: string | undefined;
   author: string | undefined;
-}
-
-export interface BranchGraphNode {
-  id: string;
-  type: 'branch';
-  name: string | undefined;
-  project: string | undefined;
-}
-
-export interface CommitGraphNode {
-  id: string;
-  type: 'commit';
-  sha: string;
-  shortSha: string;
-  title: string;
-  author: string | undefined;
-  timestamp: string | undefined;
-  url?: string;
+  /** Branch and commits are folded into the MR node rather than rendered as nodes. */
+  commitCount: number;
+  commits: GraphCommitRef[];
 }
 
 export interface DocGraphNode {
@@ -175,8 +170,6 @@ export interface DocGraphNode {
 export type GraphNode =
   | JiraGraphNode
   | MergeRequestGraphNode
-  | BranchGraphNode
-  | CommitGraphNode
   | DocGraphNode;
 
 export interface GraphEdge {

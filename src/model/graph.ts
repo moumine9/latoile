@@ -2,10 +2,15 @@
  * Builds a renderable graph (`{ nodes, edges }`) and the normalized LLM context
  * payload from a traversal result.
  *
- * Node types : jira | merge_request | commit | branch | doc
+ * Node types : jira | merge_request | doc
  * Edge types : parent | subtask | sibling | link | mention  (Jira ↔ Jira)
- *              has_mr | has_branch | has_commit             (Jira → GitLab)
+ *              has_mr                                       (Jira → MR)
  *              documented_by                                (Jira → doc)
+ *
+ * Branches and commits are NOT rendered as nodes: a branch is 1:1 with its MR
+ * (same information, extra clutter) and commits dominated the graph (26 of 41
+ * nodes on a typical ticket). Both are folded into the MR node
+ * (`sourceBranch`, `commitCount`, `commits`) and shown in the details panel.
  */
 import type {
   Commit,
@@ -41,8 +46,6 @@ export const EDGE_SCHEMA: Readonly<
   link:          { source: 'jira',          target: 'jira' },
   mention:       { source: 'jira',          target: 'jira' },
   has_mr:        { source: 'jira',          target: 'merge_request' },
-  has_branch:    { source: 'merge_request', target: 'branch' },
-  has_commit:    { source: 'merge_request', target: 'commit' },
   documented_by: { source: 'jira',          target: 'doc' },
 };
 
@@ -52,14 +55,11 @@ const WEAK_EDGE_TYPES = new Set<string>(['mention']);
 function mrNodeId(mr: MergeRequest): string {
   return `mr:${mr.project || 'default'}!${mr.iid}`;
 }
-function branchNodeId(mr: MergeRequest): string {
-  return `branch:${mr.project || 'default'}@${mr.sourceBranch}`;
-}
-function commitNodeId(commit: Commit): string {
-  return `commit:${commit.sha}`;
-}
 function docNodeId(doc: DocLink): string {
   return `doc:${doc.url}`;
+}
+function commitUrl(mr: MergeRequest, commit: Commit): string | undefined {
+  return mr.url ? mr.url.replace(/\/merge_requests\/\d+/, `/commit/${commit.sha}`) : undefined;
 }
 
 export function buildGraph(traversal: TraversalResult, jiraBaseUrl: string = ''): GraphResult {
@@ -118,6 +118,14 @@ export function buildGraph(traversal: TraversalResult, jiraBaseUrl: string = '')
     const mrs = issue.gitlab?.mergeRequests || [];
     for (const mr of mrs) {
       const mrId = mrNodeId(mr);
+      const commits = (mr.commits || []).map((commit) => ({
+        sha: commit.sha,
+        shortSha: commit.shortSha,
+        title: commit.title,
+        author: commit.author,
+        timestamp: commit.timestamp,
+        url: commitUrl(mr, commit),
+      }));
       addNode({
         id: mrId,
         type: 'merge_request',
@@ -129,34 +137,10 @@ export function buildGraph(traversal: TraversalResult, jiraBaseUrl: string = '')
         targetBranch: mr.targetBranch,
         url: mr.url,
         author: mr.author,
+        commitCount: commits.length,
+        commits,
       });
       addEdge(issue.key, mrId, 'has_mr');
-
-      if (mr.sourceBranch) {
-        const bId = branchNodeId(mr);
-        addNode({
-          id: bId,
-          type: 'branch',
-          name: mr.sourceBranch,
-          project: mr.project,
-        });
-        addEdge(mrId, bId, 'has_branch');
-      }
-
-      for (const commit of mr.commits || []) {
-        const cId = commitNodeId(commit);
-        addNode({
-          id: cId,
-          type: 'commit',
-          sha: commit.sha,
-          shortSha: commit.shortSha,
-          title: commit.title,
-          author: commit.author,
-          timestamp: commit.timestamp,
-          url: mr.url ? mr.url.replace(/\/merge_requests\/\d+/, `/commit/${commit.sha}`) : undefined,
-        });
-        addEdge(mrId, cId, 'has_commit');
-      }
     }
 
     for (const doc of issue.documentation || []) {

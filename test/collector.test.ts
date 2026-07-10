@@ -180,23 +180,20 @@ test('GlabClient resolves projects from group and caches result', async () => {
 test('EDGE_SCHEMA covers all expected edge types', () => {
   const required = [
     'parent', 'subtask', 'sibling', 'link', 'mention',
-    'has_mr', 'has_branch', 'has_commit', 'documented_by',
+    'has_mr', 'documented_by',
   ];
   for (const type of required) {
     assert.ok(type in EDGE_SCHEMA, `EDGE_SCHEMA missing: ${type}`);
   }
+  // Branches/commits are folded into the MR node, not separate node types.
+  assert.ok(!('has_branch' in EDGE_SCHEMA));
+  assert.ok(!('has_commit' in EDGE_SCHEMA));
   // Spot-check domains/ranges using local vars to satisfy noUncheckedIndexedAccess
   const hasMr = EDGE_SCHEMA['has_mr'];
-  const hasBranch = EDGE_SCHEMA['has_branch'];
-  const hasCommit = EDGE_SCHEMA['has_commit'];
   const docBy = EDGE_SCHEMA['documented_by'];
   assert.ok(hasMr);
   assert.equal(hasMr.source, 'jira');
   assert.equal(hasMr.target, 'merge_request');
-  assert.ok(hasBranch);
-  assert.equal(hasBranch.source, 'merge_request');
-  assert.ok(hasCommit);
-  assert.equal(hasCommit.source, 'merge_request');
   assert.ok(docBy);
   assert.equal(docBy.target, 'doc');
 });

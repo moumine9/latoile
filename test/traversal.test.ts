@@ -142,16 +142,21 @@ test('buildGraph produces typed nodes and edges incl. GitLab', async () => {
   }, {});
   assert.ok((types.jira ?? 0) >= 4);
   assert.equal(types.merge_request, 1);
-  assert.equal(types.branch, 1);
-  assert.equal(types.commit, 1);
   assert.equal(types.doc, 1);
+  // Branches and commits are folded into the MR node, not rendered as nodes.
+  assert.equal(types.branch, undefined);
+  assert.equal(types.commit, undefined);
 
   const entry = graph.nodes.find((n) => n.id === 'JIRA-1');
   assert.ok(entry);
   assert.equal(entry.type === 'jira' && entry.isEntry, true);
 
+  const mr = graph.nodes.find((n) => n.type === 'merge_request');
+  assert.ok(mr && mr.type === 'merge_request');
+  assert.equal(mr.commitCount, 1);
+  assert.equal(mr.commits[0]?.sha, 'abc123');
+
   assert.ok(graph.edges.some((e) => e.type === 'has_mr'));
-  assert.ok(graph.edges.some((e) => e.type === 'has_commit'));
   assert.ok(graph.edges.some((e) => e.type === 'documented_by'));
 });
 
