@@ -158,6 +158,7 @@ Three tools are exposed, all returning structured content:
 | `find_connection(keyA, keyB)` | Shortest path between two issues in the knowledge graph (offline) |
 | `known_context(jiraKey)` | What the knowledge graph already knows: stored fields, neighbors, `ageSeconds` freshness |
 | `person_activity(name, sinceDays?)` | Issues assigned / MRs+commits authored by a person (offline) |
+| `project_activity(projectPath, sinceDays?)` | Issues and MRs that touched a GitLab project — check every repo an earlier fix involved (offline) |
 | `graph_stats()` | Knowledge-graph size and freshness by node/relationship type |
 
 The last four query the Neo4j knowledge graph and need `LATOILE_NEO4J_URI`
@@ -270,6 +271,10 @@ Beyond the per-issue context object, latoile emits a graph payload
   (`src/model/graph.ts`).
 - Every edge carries a `strength`: `strong` for structural Jira links,
   `weak` for text mentions. Consumers can filter on it.
+- The context payload lists `repositories` per work item and for the whole
+  context — one work item routinely lands MRs in several repos
+  (microservices + microfrontends), and a fix attempt should consider every
+  repo the original fix touched.
 - The entry-point node is flagged (`isEntry`) and highlighted in the frontend;
   keys discovered beyond `maxDepth`/`maxNodes` appear as unresolved placeholders.
 

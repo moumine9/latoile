@@ -32,8 +32,15 @@ Nodes (all carry `first_seen`, `last_seen` datetimes):
 | `:Issue` | `key` | title, type, status, assignee, resolved, url |
 | `:MergeRequest` | `project + iid` | title, state, sourceBranch, targetBranch, url |
 | `:Commit` | `sha` | title, timestamp |
-| `:Person` | `name` (best available identity) | — |
+| `:Person` | `key` (canonical identity: first-name initials, one per hyphenated part, + last name — `kvervilleparis`, `jsroy`) | name (best display form), jiraName, gitlabUsername, schemaVersion |
+| `:Project` | `path` (e.g. `familiprix/priorx/fee-matrix`) | gitlabId (numeric API id) |
 | `:Doc` | `url` | source, title |
+
+`:Project` is first-class because work items span several repos
+(microservices + microfrontends): a fix routinely lands 2–3 MRs in different
+projects, and a later fix attempt must consider every repo the original fix
+touched. The context payloads surface this as `repositories` (per work item
+and per context).
 
 Relationships (mirror `EDGE_SCHEMA` semantics, plus what the viz dropped):
 
@@ -42,12 +49,15 @@ Relationships (mirror `EDGE_SCHEMA` semantics, plus what the viz dropped):
   persisted (derivable from shared parents, and we already learned the
   clique lesson in the viz).
 - `(:Issue)-[:HAS_MR]->(:MergeRequest)-[:HAS_COMMIT]->(:Commit)`
+- `(:MergeRequest)-[:IN_PROJECT]->(:Project)`
 - `(:Commit)-[:AUTHORED_BY]->(:Person)`, `(:Issue)-[:ASSIGNED_TO]->(:Person)`,
   `(:MergeRequest)-[:AUTHORED_BY]->(:Person)`
 - `(:Issue)-[:DOCUMENTED_BY]->(:Doc)`
 
 Constraints at startup: uniqueness on each label's key (`CREATE CONSTRAINT IF
-NOT EXISTS`). Schema version stamped on a `(:Meta)` node for future migration.
+NOT EXISTS`). Person nodes carry a `schemaVersion`; when the key derivation
+changes, the sink's migration drops older-versioned Person nodes and the next
+ingests re-create them under current keys (people are derived data).
 
 ## Architecture
 
