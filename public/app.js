@@ -160,6 +160,10 @@ const RECENT_MAX = 8;
 function isKeyLike(value) {
     return /^(PV2-)?[0-9]*$/i.test(value);
 }
+/** True when the value is a pasted GitLab merge-request link. */
+function isMrUrl(value) {
+    return /^https?:\/\/\S+\/-\/merge_requests\/\d+/.test(value);
+}
 function getRecentKeys() {
     try {
         const parsed = JSON.parse(localStorage.getItem(RECENT_STORAGE_KEY) || '[]');
@@ -180,10 +184,10 @@ function recordRecentKey(key) {
 }
 function setupSearch() {
     els.key.addEventListener('input', () => {
-        // Key-like input (number or PV2- prefix) submits directly; only free text
-        // of 3+ characters triggers the JQL search.
+        // Key-like input (number or PV2- prefix) and MR links submit directly;
+        // only free text of 3+ characters triggers the JQL search.
         const val = els.key.value.trim();
-        if (!val || val.length < 3 || isKeyLike(val)) {
+        if (!val || val.length < 3 || isKeyLike(val) || isMrUrl(val)) {
             hideResults();
             return;
         }
@@ -394,18 +398,47 @@ async function onSubmit(event) {
     await loadGraph();
 }
 function setStatus(message, isError = false) {
-    els.status.textContent = message;
+    // Keep the bar short: collapse whitespace and hard-cap the length; the full
+    // message stays available on hover via the title attribute.
+    const compact = message.replace(/\s+/g, ' ').trim();
+    els.status.textContent = truncate(compact, 90);
     els.status.title = message; // Show full text on hover
     els.status.classList.toggle('error', isError);
 }
 async function loadGraph() {
-    let key = els.key.value.trim().toUpperCase();
-    if (!key)
+    const rawInput = els.key.value.trim();
+    if (!rawInput)
         return;
-    // Auto-prepend PV2- if only a number is entered
-    if (/^\d+$/.test(key)) {
-        key = `PV2-${key}`;
-        els.key.value = key;
+    let key;
+    if (isMrUrl(rawInput)) {
+        // Pasted MR link: ask the backend to resolve it to a Jira key first.
+        els.button.disabled = true;
+        els.overlay.classList.remove('hidden');
+        els.loadingText.textContent = 'Resolving merge request…';
+        setStatus('Resolving merge request…');
+        try {
+            const res = await fetch(`/api/resolve-mr?url=${encodeURIComponent(rawInput)}`);
+            const data = (await res.json());
+            if (!res.ok || !data.key)
+                throw new Error(data.error || 'MR resolution failed');
+            key = data.key;
+            els.key.value = key;
+            setStatus(`Resolved MR !${data.mrIid ?? '?'} → ${key}`);
+        }
+        catch (err) {
+            setStatus(err instanceof Error ? err.message : String(err), true);
+            els.button.disabled = false;
+            els.overlay.classList.add('hidden');
+            return;
+        }
+    }
+    else {
+        key = rawInput.toUpperCase();
+        // Auto-prepend PV2- if only a number is entered
+        if (/^\d+$/.test(key)) {
+            key = `PV2-${key}`;
+            els.key.value = key;
+        }
     }
     els.button.disabled = true;
     els.overlay.classList.remove('hidden');
@@ -422,8 +455,9 @@ async function loadGraph() {
             try {
                 const payload = JSON.parse(event.data);
                 if (payload.type === 'log') {
+                    // Progress detail lives in the loading overlay; the status bar keeps
+                    // the stable "Fetching KEY…" message instead of every log line.
                     els.loadingText.textContent = payload.message;
-                    setStatus(payload.message);
                 }
                 else if (payload.type === 'result') {
                     const data = payload.data;
