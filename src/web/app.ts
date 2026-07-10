@@ -38,6 +38,15 @@ interface GraphNodeData {
   source?: string;
   timestamp?: string;
   label?: string;
+  commitCount?: number;
+  commits?: Array<{
+    sha: string;
+    shortSha?: string;
+    title?: string;
+    author?: string;
+    timestamp?: string;
+    url?: string;
+  }>;
 }
 
 interface GraphEdgeData {
@@ -69,10 +78,14 @@ interface CyElement {
   data(key: string): string;
   addClass(name: string): void;
   removeClass(name: string): void;
+  closedNeighborhood(): CyCollection;
+  degree(includeLoops: boolean): number;
 }
 
 interface CyCollection {
   forEach(callback: (element: CyElement) => void): void;
+  addClass(name: string): void;
+  removeClass(name: string): void;
 }
 
 interface CyEventObject {
@@ -83,6 +96,7 @@ interface CyCore {
   on(event: 'tap', selector: string, handler: (evt: CyEventObject) => void): void;
   on(event: 'tap', handler: (evt: CyEventObject) => void): void;
   edges(): CyCollection;
+  elements(): CyCollection;
   zoom(): number;
   zoom(level: number): void;
   fit(): void;
@@ -92,7 +106,7 @@ interface CyCore {
   json(): object;
 }
 
-type StyleValue = string | number | ((element: CyElement) => string);
+type StyleValue = string | number | ((element: CyElement) => string | number);
 
 interface CyStylesheet {
   selector: string;
@@ -104,6 +118,9 @@ interface CyLayoutOptions {
   animate?: boolean;
   padding?: number;
   nodeDimensionsIncludeLabels?: boolean;
+  idealEdgeLength?: number;
+  nodeRepulsion?: number;
+  componentSpacing?: number;
 }
 
 interface CyElementDef {
@@ -140,8 +157,6 @@ function getTypeColors(): Record<string, string> {
     jira: getThemeColor('jira'),
     jira_entry: getThemeColor('jira-entry'),
     merge_request: getThemeColor('mr'),
-    branch: getThemeColor('branch'),
-    commit: getThemeColor('commit'),
     doc: getThemeColor('doc'),
   };
 }
@@ -153,8 +168,6 @@ const EDGE_TYPES: string[] = [
   'link',
   'mention',
   'has_mr',
-  'has_branch',
-  'has_commit',
   'documented_by',
 ];
 
@@ -199,6 +212,8 @@ const els: Elements = {
 
 const hiddenEdgeTypes = new Set<string>();
 let cy: CyCore | undefined;
+/** Node counts by type from the last rendered graph, for the legend. */
+let legendCounts: Record<string, number> = {};
 
 init();
 
@@ -242,13 +257,19 @@ function init(): void {
   if (themeToggle) {
     themeToggle.addEventListener('click', () => {
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      const next = isDark ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      savePref('theme', next);
       buildLegend();
       if (cy) {
         cy.style(cyStyle());
       }
     });
   }
+
+  restorePrefs();
+  els.depth.addEventListener('change', () => savePref('depth', els.depth.value));
+  els.nodes.addEventListener('change', () => savePref('nodes', els.nodes.value));
 
   // Allow deep-linking: ?key=JIRA-123
   const params = new URLSearchParams(window.location.search);
@@ -261,16 +282,84 @@ function init(): void {
   setupSearch();
 }
 
+/* ---------------------------- user preferences ---------------------------- */
+
+const PREFS_STORAGE_KEY = 'latoile-prefs';
+
+interface Prefs {
+  theme?: string;
+  depth?: string;
+  nodes?: string;
+}
+
+function loadPrefs(): Prefs {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY) || '{}') as Prefs;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePref(name: keyof Prefs, value: string): void {
+  try {
+    const prefs = loadPrefs();
+    prefs[name] = value;
+    localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    // localStorage unavailable — preferences are best-effort.
+  }
+}
+
+/** Applies saved theme/depth/nodes on startup. */
+function restorePrefs(): void {
+  const prefs = loadPrefs();
+  if (prefs.theme === 'light' || prefs.theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', prefs.theme);
+    buildLegend();
+  }
+  if (prefs.depth && /^\d+$/.test(prefs.depth)) els.depth.value = prefs.depth;
+  if (prefs.nodes && /^\d+$/.test(prefs.nodes)) els.nodes.value = prefs.nodes;
+}
+
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 let currentSearchAbort: AbortController | null = null;
+let searchItems: SearchResult[] = [];
+let selectedIndex = -1;
+
+const RECENT_STORAGE_KEY = 'latoile-recent-keys';
+const RECENT_MAX = 8;
+
+/** True when the value looks like a (partial) issue key rather than free text. */
+function isKeyLike(value: string): boolean {
+  return /^(PV2-)?[0-9]*$/i.test(value);
+}
+
+function getRecentKeys(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_STORAGE_KEY) || '[]') as string[];
+    return Array.isArray(parsed) ? parsed.filter((k) => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function recordRecentKey(key: string): void {
+  try {
+    const list = [key, ...getRecentKeys().filter((k) => k !== key)].slice(0, RECENT_MAX);
+    localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // localStorage unavailable (private mode) — recents are best-effort.
+  }
+}
 
 function setupSearch(): void {
   els.key.addEventListener('input', () => {
-    // If it's matching the pattern for a key number, we don't trigger search
-    // We only trigger search if it's text (not a number or PV2- prefix)
+    // Key-like input (number or PV2- prefix) submits directly; only free text
+    // of 3+ characters triggers the JQL search.
     const val = els.key.value.trim();
-    if (!val || val.length < 3 || /^(PV2-)?[0-9]*$/.test(val)) {
-      els.searchResults.classList.add('hidden');
+    if (!val || val.length < 3 || isKeyLike(val)) {
+      hideResults();
       return;
     }
 
@@ -278,20 +367,133 @@ function setupSearch(): void {
     searchDebounce = setTimeout(() => performSearch(val), 300);
   });
 
+  els.key.addEventListener('keydown', (e: KeyboardEvent) => {
+    const visible = !els.searchResults.classList.contains('hidden');
+    if (e.key === 'Escape') {
+      hideResults();
+      return;
+    }
+    if (e.key === 'ArrowDown' && !visible && !els.key.value.trim()) {
+      // Empty field: arrow down opens the recent-lookups list.
+      e.preventDefault();
+      showRecentKeys();
+      return;
+    }
+    if (!visible || searchItems.length === 0) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Enter' && selectedIndex >= 0) {
+      const item = searchItems[selectedIndex];
+      if (item) {
+        e.preventDefault();
+        chooseResult(item.key);
+      }
+    }
+  });
+
   // Hide search results when clicking outside
   document.addEventListener('click', (e) => {
     if (!els.key.contains(e.target as Node) && !els.searchResults.contains(e.target as Node)) {
-      els.searchResults.classList.add('hidden');
+      hideResults();
     }
   });
-  
-  // Show results again when focusing input if there's a valid search value
+
   els.key.addEventListener('focus', () => {
     const val = els.key.value.trim();
-    if (val && val.length >= 3 && !/^(PV2-)?[0-9]*$/.test(val) && els.searchResults.children.length > 0) {
+    if (!val) {
+      showRecentKeys();
+    } else if (val.length >= 3 && !isKeyLike(val) && els.searchResults.children.length > 0) {
       els.searchResults.classList.remove('hidden');
     }
   });
+}
+
+function hideResults(): void {
+  els.searchResults.classList.add('hidden');
+  selectedIndex = -1;
+}
+
+/** Fills the input with the chosen key and loads its graph immediately. */
+function chooseResult(key: string): void {
+  els.key.value = key;
+  hideResults();
+  els.key.focus();
+  void loadGraph();
+}
+
+function moveSelection(delta: number): void {
+  const count = searchItems.length;
+  if (count === 0) return;
+  selectedIndex = (selectedIndex + delta + count) % count;
+  const nodes = els.searchResults.querySelectorAll('.search-result-item');
+  nodes.forEach((node, i) => {
+    node.classList.toggle('selected', i === selectedIndex);
+    if (i === selectedIndex) (node as HTMLElement).scrollIntoView({ block: 'nearest' });
+  });
+}
+
+/** Escapes `text` for HTML while wrapping case-insensitive matches of `query` in <mark>. */
+function highlightMatch(text: string, query: string): string {
+  if (!query) return esc(text);
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const idx = lower.indexOf(q, i);
+    if (idx === -1) {
+      out += esc(text.slice(i));
+      return out;
+    }
+    out += `${esc(text.slice(i, idx))}<mark>${esc(text.slice(idx, idx + q.length))}</mark>`;
+    i = idx + q.length;
+  }
+}
+
+function renderResults(items: SearchResult[], query: string, emptyMessage: string): void {
+  searchItems = items;
+  selectedIndex = -1;
+  els.searchResults.innerHTML = '';
+  els.searchResults.classList.remove('hidden');
+
+  if (items.length === 0) {
+    els.searchResults.innerHTML = `<div class="search-result-item"><div class="search-result-summary">${esc(emptyMessage)}</div></div>`;
+    searchItems = [];
+    return;
+  }
+
+  items.forEach((r, i) => {
+    const item = document.createElement('div');
+    item.className = 'search-result-item';
+    item.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <span class="search-result-key">${esc(r.key)}</span>
+        <span class="search-result-type">${esc(r.type)}</span>
+      </div>
+      <div class="search-result-summary" title="${esc(r.summary)}">${highlightMatch(r.summary, query)}</div>
+    `;
+    item.addEventListener('click', () => chooseResult(r.key));
+    item.addEventListener('mousemove', () => {
+      if (selectedIndex !== i) {
+        selectedIndex = i;
+        els.searchResults
+          .querySelectorAll('.search-result-item')
+          .forEach((node, j) => node.classList.toggle('selected', j === i));
+      }
+    });
+    els.searchResults.appendChild(item);
+  });
+}
+
+function showRecentKeys(): void {
+  const recents = getRecentKeys();
+  if (recents.length === 0) return;
+  renderResults(
+    recents.map((key) => ({ key, summary: 'Recent lookup', type: '' })),
+    '',
+    ''
+  );
 }
 
 interface SearchResult {
@@ -316,39 +518,13 @@ async function performSearch(query: string): Promise<void> {
     });
     
     if (!res.ok) throw new Error('Search failed');
-    
+
     const results = (await res.json()) as SearchResult[];
-    
-    els.searchResults.innerHTML = '';
-    
-    if (results.length === 0) {
-      els.searchResults.innerHTML = '<div class="search-result-item"><div class="search-result-summary">No results found</div></div>';
-      return;
-    }
-    
-    for (const r of results) {
-      const item = document.createElement('div');
-      item.className = 'search-result-item';
-      item.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: baseline;">
-          <span class="search-result-key">${esc(r.key)}</span>
-          <span class="search-result-type">${esc(r.type)}</span>
-        </div>
-        <div class="search-result-summary" title="${esc(r.summary)}">${esc(r.summary)}</div>
-      `;
-      
-      item.addEventListener('click', () => {
-        els.key.value = r.key;
-        els.searchResults.classList.add('hidden');
-        els.key.focus();
-        // Since we are overriding pattern, when clicking a result it's a full valid key
-        // The pattern validation handles form submit logic natively.
-      });
-      
-      els.searchResults.appendChild(item);
-    }
+    renderResults(results, query, 'No results found');
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;
+    searchItems = [];
+    selectedIndex = -1;
     els.searchResults.innerHTML = '<div class="search-result-item"><div class="search-result-summary" style="color:var(--error)">Search failed</div></div>';
   }
 }
@@ -370,23 +546,34 @@ function buildFilters(): void {
   }
 }
 
+function computeLegendCounts(graph: GraphPayload): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const n of graph.nodes) {
+    const bucket = n.type === 'jira' && n.isEntry ? 'jira_entry' : n.type;
+    counts[bucket] = (counts[bucket] || 0) + 1;
+  }
+  return counts;
+}
+
 function buildLegend(): void {
   els.legend.innerHTML = '';
   const items: Array<[string, string]> = [
     ['jira', 'Jira issue'],
     ['jira_entry', 'Entry point'],
     ['merge_request', 'Merge request'],
-    ['branch', 'Branch'],
-    ['commit', 'Commit'],
     ['doc', 'Doc'],
   ];
   const colors = getTypeColors();
   for (const [type, label] of items) {
+    const count = legendCounts[type];
+    // Hide types absent from the current graph, but show the full legend
+    // before any graph has been loaded.
+    if (Object.keys(legendCounts).length > 0 && !count) continue;
     const span = document.createElement('span');
     const dot = document.createElement('span');
     dot.className = 'dot';
     dot.style.background = colors[type] ?? '';
-    span.append(dot, document.createTextNode(label));
+    span.append(dot, document.createTextNode(count ? `${label} (${count})` : label));
     els.legend.append(span);
   }
 }
@@ -418,8 +605,8 @@ async function loadGraph(): Promise<void> {
   setStatus(`Fetching ${key}…`);
 
   const query = new URLSearchParams({
-    maxDepth: els.depth.value || '2',
-    maxNodes: els.nodes.value || '100',
+    maxDepth: els.depth.value || '1',
+    maxNodes: els.nodes.value || '50',
   });
 
   const url = `/api/graph/${encodeURIComponent(key)}?${query}`;
@@ -436,6 +623,7 @@ async function loadGraph(): Promise<void> {
         } else if (payload.type === 'result') {
           const data = payload.data as GraphPayload;
           render(data);
+          recordRecentKey(key);
           const s: GraphStats = data.stats || {};
           setStatus(`${s.nodes ?? '?'} nodes · ${s.edges ?? '?'} edges · fetched ${s.fetched ?? '?'} Jira issues`);
           source.close();
@@ -466,6 +654,8 @@ async function loadGraph(): Promise<void> {
 }
 
 function render(graph: GraphPayload): void {
+  legendCounts = computeLegendCounts(graph);
+  buildLegend();
   const elements: CyElementDef[] = [
     ...graph.nodes.map((n): CyElementDef => ({ data: { ...n, label: nodeLabel(n) } })),
     ...graph.edges.map((e): CyElementDef => ({ data: e })),
@@ -475,7 +665,15 @@ function render(graph: GraphPayload): void {
     container: document.getElementById('cy'),
     elements,
     style: cyStyle(),
-    layout: { name: 'cose', animate: false, padding: 40, nodeDimensionsIncludeLabels: true },
+    layout: {
+      name: 'cose',
+      animate: false,
+      padding: 40,
+      nodeDimensionsIncludeLabels: true,
+      idealEdgeLength: 90,
+      nodeRepulsion: 8000,
+      componentSpacing: 80,
+    },
     zoomingEnabled: true,
     userZoomingEnabled: true,
     userPanningEnabled: true,
@@ -502,6 +700,7 @@ function render(graph: GraphPayload): void {
     } else {
       // Single tap
       showDetails(node);
+      highlightNeighborhood(evt.target as CyElement);
       tapTimeout = setTimeout(() => {
         tapTimeout = null;
       }, 300); // 300ms window for double tap
@@ -509,9 +708,24 @@ function render(graph: GraphPayload): void {
   });
 
   cy.on('tap', (evt: CyEventObject) => {
-    if (evt.target === cy) showEmptyDetails();
+    if (evt.target === cy) {
+      showEmptyDetails();
+      clearHighlight();
+    }
   });
   applyEdgeFilter();
+}
+
+/** Fades everything except the tapped node and its direct neighbors. */
+function highlightNeighborhood(node: CyElement): void {
+  if (!cy) return;
+  cy.elements().addClass('faded');
+  node.closedNeighborhood().removeClass('faded');
+}
+
+function clearHighlight(): void {
+  if (!cy) return;
+  cy.elements().removeClass('faded');
 }
 
 function nodeLabel(node: GraphNodeData): string {
@@ -519,11 +733,7 @@ function nodeLabel(node: GraphNodeData): string {
     case 'jira':
       return `${node.key ?? node.id}${node.title ? `\n${truncate(node.title, 28)}` : ''}`;
     case 'merge_request':
-      return `!${node.iid}\n${truncate(node.title || '', 24)}`;
-    case 'branch':
-      return truncate(node.name || 'branch', 26);
-    case 'commit':
-      return truncate(node.title || node.shortSha || (node.sha || '').slice(0, 8), 30);
+      return `!${node.iid}${node.commitCount ? ` · ${node.commitCount} commit${node.commitCount > 1 ? 's' : ''}` : ''}\n${truncate(node.title || '', 24)}`;
     case 'doc':
       return truncate(node.title || 'doc', 24);
     default:
@@ -541,10 +751,29 @@ function colorFor(node: GraphNodeData): string {
   return colors[node.type] || '#888';
 }
 
+/** Jira nodes grow with their connectivity so hubs stand out; capped at 44px. */
+function nodeSize(ele: CyElement): number {
+  if (ele.data().type !== 'jira') return 26;
+  return Math.min(44, 24 + ele.degree(false) * 2);
+}
+
+function edgeColorFor(type: string): string {
+  const colors = getTypeColors();
+  const byType: Record<string, string | undefined> = {
+    parent: colors.jira,
+    subtask: colors.jira,
+    sibling: getThemeColor('muted'),
+    mention: getThemeColor('muted'),
+    link: colors.doc,
+    has_mr: colors.merge_request,
+    documented_by: colors.doc,
+  };
+  return byType[type] || getThemeColor('doc');
+}
+
 function cyStyle(): CyStylesheet[] {
   const textColor = getThemeColor('text');
   const mutedColor = getThemeColor('muted');
-  const docColor = getThemeColor('doc');
   const branchColor = getThemeColor('branch');
   const panelColor = getThemeColor('panel');
 
@@ -559,8 +788,8 @@ function cyStyle(): CyStylesheet[] {
         'text-wrap': 'wrap',
         'text-valign': 'bottom',
         'text-margin-y': 4,
-        width: 26,
-        height: 26,
+        width: (ele: CyElement) => nodeSize(ele),
+        height: (ele: CyElement) => nodeSize(ele),
         cursor: 'pointer',
       },
     },
@@ -581,14 +810,6 @@ function cyStyle(): CyStylesheet[] {
       style: { shape: 'round-rectangle' },
     },
     {
-      selector: 'node[type="commit"]',
-      style: { shape: 'diamond' },
-    },
-    {
-      selector: 'node[type="branch"]',
-      style: { shape: 'round-tag' },
-    },
-    {
       selector: 'node[type="doc"]',
       style: { shape: 'round-rectangle' },
     },
@@ -596,8 +817,8 @@ function cyStyle(): CyStylesheet[] {
       selector: 'edge',
       style: {
         width: 1.5,
-        'line-color': docColor,
-        'target-arrow-color': docColor,
+        'line-color': (ele: CyElement) => edgeColorFor(ele.data('type')),
+        'target-arrow-color': (ele: CyElement) => edgeColorFor(ele.data('type')),
         'target-arrow-shape': 'triangle',
         'curve-style': 'bezier',
         label: 'data(type)',
@@ -618,6 +839,7 @@ function cyStyle(): CyStylesheet[] {
       selector: 'edge[strength="weak"]',
       style: { 'line-style': 'dotted', opacity: 0.55 },
     },
+    { selector: '.faded', style: { opacity: 0.15 } },
     { selector: '.hidden', style: { display: 'none' } },
   ];
 }
@@ -679,21 +901,19 @@ function showDetails(node: GraphNodeData): void {
     body += '<dl>';
     body += row('Project', esc(node.project));
     body += row('State', esc(node.state));
-    body += row('Source', esc(node.sourceBranch));
+    body += row('Branch', esc(node.sourceBranch));
     body += row('Target', esc(node.targetBranch));
     body += row('Author', esc(node.author));
     body += row('URL', link(node.url, node.url));
     body += '</dl>';
-  } else if (node.type === 'branch') {
-    body += `<h2>${esc(node.name)}</h2><dl>${row('Project', esc(node.project))}</dl>`;
-  } else if (node.type === 'commit') {
-    body += `<h2>${esc(node.shortSha || node.sha)}</h2>`;
-    body += '<dl>';
-    body += row('Title', esc(node.title));
-    body += row('Author', esc(node.author));
-    body += row('Timestamp', esc(node.timestamp));
-    body += row('SHA', esc(node.sha));
-    body += '</dl>';
+    if (Array.isArray(node.commits) && node.commits.length) {
+      body += `<div class="section-title">Commits (${node.commits.length})</div><ul class="commit-list">`;
+      for (const c of node.commits) {
+        const label = `${c.shortSha || c.sha.slice(0, 7)} ${c.title || ''}`.trim();
+        body += `<li>${link(c.url, label)}</li>`;
+      }
+      body += '</ul>';
+    }
   } else if (node.type === 'doc') {
     body += `<h2>${esc(node.title)}</h2>`;
     body += `<dl>${row('Source', esc(node.source))}${row('URL', link(node.url, node.url))}</dl>`;

@@ -84,11 +84,11 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
     try {
       const searchRun: SearchRunFn = options.searchRun || defaultSearchRun;
       const escaped = escapeJqlString(q.trim());
-      const jql = `text ~ "${escaped}" OR summary ~ "${escaped}"`;
+      const jql = `(text ~ "${escaped}" OR summary ~ "${escaped}") ORDER BY updated DESC`;
       const stdout = await searchRun(config.acliBin, [
         'jira', 'workitem', 'search',
         '--jql', jql,
-        '--limit', '5',
+        '--limit', '8',
         '--fields', 'key,summary,issuetype',
         '--json',
       ]);
