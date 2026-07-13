@@ -35,6 +35,12 @@ export interface NormalizedIssue {
   description: string;
   /** Derived from Jira's dev-status field. undefined = unknown; false = confirmed none. */
   hasGitlabData?: boolean;
+  /**
+   * Set when this issue was served from the knowledge graph instead of a live
+   * fetch. The sink skips such issues on ingest so `last_seen` keeps meaning
+   * "last verified against Jira/GitLab".
+   */
+  provenance?: 'knowledge_graph';
 }
 
 /** A commit normalized from GitLab. */
@@ -85,6 +91,10 @@ export interface IssueNode {
   documentation: DocLink[];
   description?: string;
   gitlab: GitlabContext;
+  /** Derived from Jira's dev-status field. undefined = unknown; false = confirmed none. */
+  hasGitlabData?: boolean;
+  /** Set when the issue came from the knowledge graph, not a live fetch. */
+  provenance?: 'knowledge_graph';
 }
 
 /** A recorded relationship between two Jira keys. */

@@ -9,12 +9,20 @@ import { config as defaultConfig, type Config } from './config.js';
 import { SqliteCacheStore, type CacheStore } from './cache/store.js';
 import { CachedIssueSource, CachedGitlabSource } from './cache/cached-clients.js';
 import type { GraphSink } from './sink/graph-sink.js';
-import type { ContextResult, GraphResult, LogFn } from './types.js';
+import type { KnowledgeGraph } from './sink/knowledge-graph.js';
+import {
+  KnowledgeGraphGitlabSource,
+  KnowledgeGraphIssueSource,
+  type GraphServeTally,
+} from './sink/kg-clients.js';
+import type { ContextResult, GraphResult, LogFn, TraversalResult } from './types.js';
 
 /** Both payloads produced by a full pipeline run. */
 export interface ContextGraph {
   graph: GraphResult;
   context: ContextResult;
+  /** Issues served from the knowledge graph instead of live (partial refresh). */
+  graphServedIssues?: number;
 }
 
 export interface BuildContextGraphOptions {
@@ -27,6 +35,14 @@ export interface BuildContextGraphOptions {
   refresh?: boolean;
   /** Knowledge-graph sink override — mainly for tests. `null` disables the sink for this run. */
   sink?: GraphSink | null;
+  /**
+   * Partial incremental refresh: with a knowledge graph available, issues
+   * whose stored data is at most this old are served from the graph and only
+   * the stale frontier is fetched live.
+   */
+  maxAgeSeconds?: number;
+  /** Read handle for partial refresh; supplied by the MCP layer or tests. */
+  knowledgeGraph?: KnowledgeGraph;
 }
 
 // One knowledge-graph sink per process, created lazily on first use so the
@@ -122,25 +138,58 @@ export function createClients(
  * Runs the full pipeline for a Jira entry key and returns both the renderable
  * graph and the normalized LLM context payload.
  */
+/**
+ * Copy of the traversal result without knowledge-graph-served issues, so the
+ * sink never bumps `last_seen` for data that was read back from the graph
+ * rather than verified live. Relations stay intact: edge upserts MATCH both
+ * endpoints, and graph-served endpoints already exist in the database.
+ */
+function withoutGraphServedIssues(traversal: TraversalResult): TraversalResult {
+  const liveIssues = new Map(
+    [...traversal.issues].filter(([, node]) => node.provenance !== 'knowledge_graph')
+  );
+  if (liveIssues.size === traversal.issues.size) return traversal;
+  return { ...traversal, issues: liveIssues };
+}
+
 export async function buildContextGraph(
   entryKey: string,
   options: BuildContextGraphOptions = {}
 ): Promise<ContextGraph> {
   const config = options.config || defaultConfig;
   const log = options.log || (() => {});
-  const clients = options.clients || createClients(config, log, { refresh: options.refresh });
+  let clients = options.clients || createClients(config, log, { refresh: options.refresh });
+
+  // Partial incremental refresh: fresh-enough issues come from the knowledge
+  // graph, only the stale frontier hits Jira/GitLab.
+  const tally: GraphServeTally = { issues: 0, gitlabContexts: 0 };
+  if (options.knowledgeGraph && options.maxAgeSeconds !== undefined && !options.refresh) {
+    const kgOpts = {
+      graph: options.knowledgeGraph,
+      maxAgeSeconds: options.maxAgeSeconds,
+      tally,
+      log,
+    };
+    clients = {
+      acli: new KnowledgeGraphIssueSource(clients.acli, kgOpts),
+      glab: new KnowledgeGraphGitlabSource(clients.glab, kgOpts),
+    };
+  }
 
   const traversal = await traverse(entryKey, clients, {
     maxDepth: options.maxDepth ?? config.maxDepth,
     maxNodes: options.maxNodes ?? config.maxNodes,
     log,
   });
+  if (tally.issues > 0) {
+    log(`Partial refresh: ${tally.issues} issue(s) served from the knowledge graph`);
+  }
 
   // Feed the knowledge graph. Fire-safe: a sink failure never fails the run.
   const sink = options.sink === null ? undefined : options.sink ?? (await getSharedSink(config, log));
   if (sink) {
     try {
-      await sink.ingest(traversal);
+      await sink.ingest(withoutGraphServedIssues(traversal));
     } catch (err) {
       log(`Knowledge graph write failed (${err instanceof Error ? err.message : String(err)})`);
     }
@@ -150,6 +199,7 @@ export async function buildContextGraph(
   return {
     graph: buildGraph(traversal, config.jiraBaseUrl),
     context: buildContext(traversal),
+    graphServedIssues: tally.issues,
   };
 }
 

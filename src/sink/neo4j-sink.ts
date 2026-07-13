@@ -73,6 +73,8 @@ interface IssueParam {
   status: string | null;
   assignee: string | null;
   resolved: boolean;
+  /** Tri-state: true/false from Jira's dev-status field, null = unknown. */
+  hasGitlabData: boolean | null;
 }
 
 function issueParam(node: IssueNode): IssueParam {
@@ -83,6 +85,7 @@ function issueParam(node: IssueNode): IssueParam {
     status: node.status ?? null,
     assignee: node.assignee ?? null,
     resolved: Boolean(node.resolved),
+    hasGitlabData: node.hasGitlabData ?? null,
   };
 }
 
@@ -124,7 +127,8 @@ export class Neo4jSink implements GraphSink {
            n.type = coalesce(i.type, n.type),
            n.status = coalesce(i.status, n.status),
            n.assignee = coalesce(i.assignee, n.assignee),
-           n.resolved = coalesce(n.resolved, false) OR i.resolved`,
+           n.resolved = coalesce(n.resolved, false) OR i.resolved,
+           n.hasGitlabData = coalesce(i.hasGitlabData, n.hasGitlabData)`,
       { issues: nodes.map(issueParam) }
     );
 

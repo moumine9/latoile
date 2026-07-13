@@ -117,8 +117,11 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
           .array(z.string())
           .describe('Every GitLab project touched in this context — a fix should consider all of them'),
         traceability: looseObject().describe('Jira-key ↔ merge-request link table'),
-        source: z.enum(['live', 'knowledge_graph']).describe('Where this answer came from'),
+        source: z
+          .enum(['live', 'knowledge_graph', 'partial'])
+          .describe('live = full traversal; knowledge_graph = fully stored; partial = only the stale frontier was fetched live'),
         ageSeconds: z.number().optional().describe('Age of the stalest stored issue (knowledge_graph source only)'),
+        graphServedIssues: z.number().optional().describe('Issues served from the graph during a partial refresh'),
       },
     },
     (args, extra) => tracked(getContextTool(args, run, progressReporter(server, extra)))

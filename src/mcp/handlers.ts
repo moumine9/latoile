@@ -56,11 +56,14 @@ export async function getContextTool(
     return errorResult(`"${args.jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`);
   }
 
-  // Incremental refresh: fresh-enough stored data short-circuits the live
-  // traversal entirely. Any failure here falls through to the live path.
+  // Incremental refresh, two tiers. Tier 1: the whole stored neighborhood is
+  // fresh — answer straight from the graph, zero live calls. Tier 2 (below):
+  // traverse, but serve each fresh issue from the graph and live-fetch only
+  // the stale frontier. Any graph failure falls through to fully live.
+  let kg: KnowledgeGraph | undefined;
   if (args.maxAgeSeconds !== undefined && !args.refresh) {
     try {
-      const kg = graph ?? (await getSharedKnowledgeGraph());
+      kg = graph ?? (await getSharedKnowledgeGraph());
       const stored = kg ? await kg.storedContext(key, args.maxDepth, args.maxNodes) : undefined;
       if (stored?.found && stored.ageSeconds !== undefined && stored.ageSeconds <= args.maxAgeSeconds) {
         return okResult({
@@ -78,12 +81,17 @@ export async function getContextTool(
   }
 
   try {
-    const { context } = await run(key, {
+    const { context, graphServedIssues } = await run(key, {
       maxDepth: args.maxDepth,
       maxNodes: args.maxNodes,
       refresh: args.refresh,
+      maxAgeSeconds: args.maxAgeSeconds,
+      knowledgeGraph: kg,
       log: progressLogger(onProgress),
     });
+    if (graphServedIssues && graphServedIssues > 0) {
+      return okResult({ ...context, source: 'partial', graphServedIssues });
+    }
     return okResult({ ...context, source: 'live' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

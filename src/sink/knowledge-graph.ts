@@ -6,7 +6,7 @@
  * no database; `createKnowledgeGraph` wires the real driver lazily.
  */
 import { normalizePersonToken } from './person-identity.js';
-import type { LogFn } from '../types.js';
+import type { GitlabContext, LogFn, NormalizedIssue } from '../types.js';
 
 /** Runs one read query and returns the result rows as plain objects. */
 export type CypherQueryFn = (
@@ -343,6 +343,135 @@ export class KnowledgeGraph {
       { path: projectPath, since }
     );
     return { matches: rows as unknown as ProjectActivityMatch[], sinceDays };
+  }
+
+  /**
+   * Reconstructs one stored issue as the traversal's `NormalizedIssue` shape
+   * (parent, subtasks, outgoing links/mentions, docs) with its freshness.
+   * Returns undefined for unknown or placeholder-only issues — the caller
+   * falls back to a live fetch.
+   */
+  async storedIssue(key: string): Promise<{ issue: NormalizedIssue; ageSeconds: number } | undefined> {
+    const rows = await this.deps.query(
+      `MATCH (i:Issue {key: $key}) WHERE i.resolved = true
+       OPTIONAL MATCH (parent:Issue)-[:PARENT_OF]->(i)
+       OPTIONAL MATCH (i)-[:HAS_SUBTASK]->(st:Issue)
+       OPTIONAL MATCH (i)-[l:LINKS_TO]->(li:Issue)
+       OPTIONAL MATCH (i)-[:MENTIONS]->(mi:Issue)
+       OPTIONAL MATCH (i)-[:DOCUMENTED_BY]->(d:Doc)
+       RETURN i {.key, .title, .type, .status, .assignee, .hasGitlabData,
+                 last_seen: toString(i.last_seen)} AS issue,
+              parent.key AS parentKey,
+              collect(DISTINCT st.key) AS subtasks,
+              collect(DISTINCT CASE WHEN li IS NULL THEN NULL ELSE {key: li.key, type: l.linkType} END) AS links,
+              collect(DISTINCT mi.key) AS mentions,
+              collect(DISTINCT CASE WHEN d IS NULL THEN NULL ELSE d {.source, .title, .url} END) AS documentation`,
+      { key }
+    );
+    interface StoredIssueDetailRow {
+      issue: StoredIssue & { hasGitlabData?: boolean };
+      parentKey: string | null;
+      subtasks: Array<string | null>;
+      links: Array<{ key: string; type: string | null } | null>;
+      mentions: Array<string | null>;
+      documentation: Array<{ source?: string; title?: string; url: string } | null>;
+    }
+    const row = rows[0] as StoredIssueDetailRow | undefined;
+    if (!row) return undefined;
+    const ageSeconds = secondsSince(row.issue.last_seen);
+    if (ageSeconds === undefined) return undefined;
+
+    const issue: NormalizedIssue = {
+      key: row.issue.key,
+      type: row.issue.type,
+      title: row.issue.title,
+      status: row.issue.status,
+      assignee: row.issue.assignee,
+      parentKey: row.parentKey ?? undefined,
+      subtasks: row.subtasks.filter((s): s is string => s !== null),
+      links: row.links
+        .filter((l): l is { key: string; type: string | null } => l !== null)
+        .map((l) => ({ key: l.key, type: l.type ?? 'relates', direction: 'outward' })),
+      mentions: row.mentions.filter((m): m is string => m !== null),
+      documentation: row.documentation
+        .filter((d): d is { source?: string; title?: string; url: string } => d !== null)
+        .map((d) => ({ source: d.source ?? 'web', title: d.title ?? d.url, url: d.url })),
+      description: '',
+      hasGitlabData: row.issue.hasGitlabData,
+    };
+    return { issue, ageSeconds };
+  }
+
+  /**
+   * Reconstructs an issue's stored GitLab context (MRs with commits, authors,
+   * and project info). Freshness is the issue node's own `last_seen` — the MRs
+   * were last verified together with the issue.
+   */
+  async storedGitlabContext(key: string): Promise<{ context: GitlabContext; ageSeconds: number } | undefined> {
+    const rows = await this.deps.query(
+      `MATCH (i:Issue {key: $key}) WHERE i.resolved = true
+       OPTIONAL MATCH (i)-[:HAS_MR]->(mr:MergeRequest)
+       OPTIONAL MATCH (mr)-[:IN_PROJECT]->(proj:Project)
+       OPTIONAL MATCH (mr)-[:AUTHORED_BY]->(author:Person)
+       OPTIONAL MATCH (mr)-[:HAS_COMMIT]->(c:Commit)
+       OPTIONAL MATCH (c)-[:AUTHORED_BY]->(ca:Person)
+       WITH i, mr, proj, author,
+            collect(CASE WHEN c IS NULL THEN NULL ELSE {sha: c.sha, title: c.title, timestamp: toString(c.timestamp), author: ca.name} END) AS commits
+       RETURN toString(i.last_seen) AS lastSeen,
+              collect(CASE WHEN mr IS NULL THEN NULL ELSE {
+                iid: mr.iid, project: mr.project, projectId: proj.gitlabId,
+                title: mr.title, state: mr.state,
+                sourceBranch: mr.sourceBranch, targetBranch: mr.targetBranch,
+                url: mr.url, author: coalesce(author.gitlabUsername, author.name),
+                commits: commits
+              } END) AS mergeRequests`,
+      { key }
+    );
+    interface StoredGitlabRow {
+      lastSeen: string | null;
+      mergeRequests: Array<{
+        iid: number;
+        project: string | null;
+        projectId: number | null;
+        title: string | null;
+        state: string | null;
+        sourceBranch: string | null;
+        targetBranch: string | null;
+        url: string | null;
+        author: string | null;
+        commits: Array<{ sha: string; title: string | null; timestamp: string | null; author: string | null } | null>;
+      } | null>;
+    }
+    const row = rows[0] as StoredGitlabRow | undefined;
+    if (!row) return undefined;
+    const ageSeconds = secondsSince(row.lastSeen ?? undefined);
+    if (ageSeconds === undefined) return undefined;
+
+    const context: GitlabContext = {
+      mergeRequests: row.mergeRequests
+        .filter((mr): mr is NonNullable<StoredGitlabRow['mergeRequests'][number]> => mr !== null)
+        .map((mr) => ({
+          iid: mr.iid,
+          project: mr.project ?? undefined,
+          projectId: mr.projectId ?? undefined,
+          title: mr.title ?? '',
+          state: mr.state ?? '',
+          sourceBranch: mr.sourceBranch ?? undefined,
+          targetBranch: mr.targetBranch ?? undefined,
+          url: mr.url ?? undefined,
+          author: mr.author ?? undefined,
+          commits: mr.commits
+            .filter((c): c is NonNullable<(typeof mr.commits)[number]> => c !== null)
+            .map((c) => ({
+              sha: c.sha,
+              shortSha: c.sha.slice(0, 8),
+              title: c.title ?? '',
+              author: c.author ?? undefined,
+              timestamp: c.timestamp ?? undefined,
+            })),
+        })),
+    };
+    return { context, ageSeconds };
   }
 
   /** Node/relationship counts and freshness bounds — "how much does laToile remember?". */
