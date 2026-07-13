@@ -23,6 +23,10 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 - **Graph slimming**: branch and commit nodes removed — folded into the MR node (`sourceBranch`, `commitCount`, `commits[]` with URLs) and shown in the details panel; `has_branch`/`has_commit` dropped from `EDGE_SCHEMA`. PV2-17892: 41→12 nodes.
 - **Prefs persisted** (localStorage): theme, depth, nodes; stale 2/100 fallbacks in HTML/JS fixed to 1/50.
 
+## Session 2026-07-13
+
+- **Partial incremental refresh (phase 3a tier 2)**: `src/sink/kg-clients.ts` decorates the traversal's `IssueSource`/`GitlabSource` — issues whose stored `last_seen` is within `maxAgeSeconds` are reconstructed from Neo4j (`storedIssue`/`storedGitlabContext`, incl. MRs, commits, authors, projects), only the stale frontier hits Jira/GitLab. `hasGitlabData` now persisted on `:Issue` so graph-served issues skip GitLab searches. Graph-served issues get `provenance: 'knowledge_graph'` and are filtered out of sink ingestion (`last_seen` = last verified live, never self-refreshing). `get_context` reports `source: 'partial'` + `graphServedIssues`.
+
 ## Session 2026-07-10
 
 - **Person identity re-schema** (user-reported dupes: kvervilleparis/"Karianne Verville-Paris", jsroy/jroy): `:Person` merges on a canonical key — first-name initials (one per hyphenated part) + last name (`src/sink/person-identity.ts`, `PERSON_SCHEMA_VERSION` migration drops old-keyed nodes). Properties: `name`, `jiraName`, `gitlabUsername`. Verified live post-migration (schemaVersion 2 nodes only).

@@ -114,12 +114,19 @@ traverse the stale frontier (incremental refresh — the real speed prize).
    driver). Exit criterion: `find_connection` between two tickets that share
    only an old epic returns the path without any live Jira call.
 3. **Freshness & enrichment (later, design first).**
-   - Incremental refresh — ✅ first step done 2026-07-10: `get_context` accepts
-     `maxAgeSeconds` and serves the stored neighborhood
-     (`KnowledgeGraph.storedContext`, age = stalest resolved issue) instead of
-     a live traversal when fresh enough. Still open: partial refresh
-     (live-fetch only the stale frontier instead of all-or-nothing) and
-     handling deleted/moved issues (mark `missing` rather than delete).
+   - Incremental refresh — ✅ done 2026-07-13, two tiers. Tier 1 (2026-07-10):
+     when the whole stored neighborhood is fresh, `get_context(maxAgeSeconds)`
+     answers from `KnowledgeGraph.storedContext` with zero live calls
+     (`source: 'knowledge_graph'`). Tier 2 (2026-07-13): otherwise the
+     traversal runs with knowledge-graph-backed client decorators
+     (`src/sink/kg-clients.ts`) — each issue/GitLab context whose own
+     `last_seen` is within budget is reconstructed from the graph
+     (`storedIssue` / `storedGitlabContext`), only the stale frontier hits
+     Jira/GitLab (`source: 'partial'`, `graphServedIssues` count).
+     Graph-served issues carry `provenance: 'knowledge_graph'` and are
+     excluded from re-ingestion so `last_seen` always means "last verified
+     live". Still open: deleted/moved issues (mark `missing` rather than
+     delete).
    - MR diff ingestion (`:File` nodes, `TOUCHES` edges) to unlock "issues
      whose MRs touched file X" — new GitLab API calls, volume concerns, so
      separate design.

@@ -151,7 +151,7 @@ Three tools are exposed, all returning structured content:
 
 | Tool | Purpose |
 | --- | --- |
-| `get_context(jiraKey, maxDepth?, maxNodes?, refresh?, maxAgeSeconds?)` | Full traversal → normalized LLM context payload; with `maxAgeSeconds`, answers instantly from the knowledge graph when stored data is fresh enough (`source` field says which path served it) |
+| `get_context(jiraKey, maxDepth?, maxNodes?, refresh?, maxAgeSeconds?)` | Full traversal → normalized LLM context payload. With `maxAgeSeconds`: a fully fresh neighborhood is answered instantly from the knowledge graph, and otherwise only the stale frontier is fetched live (`source`: `live` / `knowledge_graph` / `partial`) |
 | `get_context_from_mr(mrUrl, …)` | Same, from a GitLab MR link — the Jira key is extracted from the MR's source branch, title, or description (`resolved_from` block says which) |
 | `search_issues(query, limit?)` | JQL full-text search, newest-updated first — find the key when only a topic is known |
 | `get_issue(jiraKey)` | Single issue (status, parent, subtasks, links…), no traversal — fast and cache-backed |
