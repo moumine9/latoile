@@ -5,7 +5,7 @@ import type { DocLink, IssueLink, LogFn, NormalizedIssue, RunFn } from '../types
 /* Raw acli / Jira REST payload shapes                                         */
 /* -------------------------------------------------------------------------- */
 
-interface AdfNode {
+type AdfNode = {
   type?: string;
   text?: string;
   content?: AdfNode[];
@@ -13,28 +13,28 @@ interface AdfNode {
 
 type JiraDescription = string | AdfNode;
 
-interface JiraUser {
+type JiraUser = {
   displayName?: string;
   name?: string;
   emailAddress?: string;
 }
 
-interface JiraNamed {
+type JiraNamed = {
   name?: string;
 }
 
-interface JiraIssueRef {
+type JiraIssueRef = {
   key?: string;
   issueKey?: string;
 }
 
-interface JiraLinkType {
+type JiraLinkType = {
   outward?: string;
   inward?: string;
   name?: string;
 }
 
-interface JiraIssueLink {
+type JiraIssueLink = {
   type?: JiraLinkType | string;
   outwardIssue?: JiraIssueRef;
   inwardIssue?: JiraIssueRef;
@@ -42,16 +42,16 @@ interface JiraIssueLink {
   issueKey?: string;
 }
 
-interface JiraComment {
+type JiraComment = {
   body?: JiraDescription;
 }
 
-interface JiraRemoteLinkObject {
+type JiraRemoteLinkObject = {
   url?: string;
   title?: string;
 }
 
-interface JiraRemoteLink {
+type JiraRemoteLink = {
   object?: JiraRemoteLinkObject;
   url?: string;
   title?: string;
@@ -59,7 +59,7 @@ interface JiraRemoteLink {
   relationship?: string;
 }
 
-interface JiraFields {
+type JiraFields = {
   key?: string;
   summary?: string;
   title?: string;
@@ -82,19 +82,19 @@ interface JiraFields {
   customfield_10000?: string;
 }
 
-export interface RawJiraIssue extends JiraFields {
+export type RawJiraIssue = {
   issueKey?: string;
   fields?: JiraFields;
   parentKey?: string;
   comments?: Array<JiraComment | string>;
   documentation?: JiraRemoteLink[];
-}
+} & JiraFields
 
 /* -------------------------------------------------------------------------- */
 /* Client                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export interface AcliClientDeps {
+export type AcliClientDeps = {
   run: RunFn;
   bin?: string;
   log?: LogFn;
@@ -169,11 +169,11 @@ export class AcliClient {
 
 /* --- Jira dev-status / GitLab hint ---------------------------------------- */
 
-interface DevInfoCount {
+type DevInfoCount = {
   count?: number;
 }
 
-interface DevInfoCachedValue {
+type DevInfoCachedValue = {
   summary?: {
     repository?: DevInfoCount;
     pullrequest?: DevInfoCount;
@@ -182,7 +182,7 @@ interface DevInfoCachedValue {
   };
 }
 
-interface DevInfo {
+type DevInfo = {
   cachedValue?: DevInfoCachedValue;
 }
 

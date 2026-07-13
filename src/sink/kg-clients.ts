@@ -16,12 +16,12 @@ import type { KnowledgeGraph } from './knowledge-graph.js';
 import type { GitlabContext, LogFn, NormalizedIssue } from '../types.js';
 
 /** Mutable tally shared by both decorators; the pipeline reports it. */
-export interface GraphServeTally {
+export type GraphServeTally = {
   issues: number;
   gitlabContexts: number;
 }
 
-export interface KgClientOptions {
+export type KgClientOptions = {
   graph: KnowledgeGraph;
   /** Serve stored data at most this old; older falls through to live. */
   maxAgeSeconds: number;

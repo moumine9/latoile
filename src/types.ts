@@ -7,21 +7,21 @@
  */
 
 /** A typed Jira ↔ Jira issue link discovered on an issue. */
-export interface IssueLink {
+export type IssueLink = {
   key: string;
   type: string;
   direction: 'inward' | 'outward';
 }
 
 /** A documentation reference (Confluence / web link) attached to an issue. */
-export interface DocLink {
+export type DocLink = {
   source: string;
   title: string;
   url: string;
 }
 
 /** An issue normalized from the Atlassian CLI payload. */
-export interface NormalizedIssue {
+export type NormalizedIssue = {
   key: string | undefined;
   type: string | undefined;
   title: string | undefined;
@@ -44,7 +44,7 @@ export interface NormalizedIssue {
 }
 
 /** A commit normalized from GitLab. */
-export interface Commit {
+export type Commit = {
   sha: string;
   shortSha: string;
   title: string;
@@ -53,7 +53,7 @@ export interface Commit {
 }
 
 /** A merge request normalized from GitLab. */
-export interface MergeRequest {
+export type MergeRequest = {
   iid: number;
   project: string | undefined;
   /** Numeric GitLab project id, when the API provided it. */
@@ -68,7 +68,7 @@ export interface MergeRequest {
 }
 
 /** All GitLab context resolved for a single Jira key. */
-export interface GitlabContext {
+export type GitlabContext = {
   mergeRequests: MergeRequest[];
 }
 
@@ -76,7 +76,7 @@ export interface GitlabContext {
  * A node in the traversal graph. Starts as an unresolved placeholder and is
  * enriched in place once the issue is fetched.
  */
-export interface IssueNode {
+export type IssueNode = {
   key: string;
   resolved: boolean;
   depth: number;
@@ -98,7 +98,7 @@ export interface IssueNode {
 }
 
 /** A recorded relationship between two Jira keys. */
-export interface Relation {
+export type Relation = {
   from: string;
   to: string;
   relation: string;
@@ -108,7 +108,7 @@ export interface Relation {
 }
 
 /** Summary statistics for a traversal run. */
-export interface TraversalStats {
+export type TraversalStats = {
   fetched: number;
   total: number;
   capped: boolean;
@@ -118,7 +118,7 @@ export interface TraversalStats {
 }
 
 /** The full result of a breadth-first Jira traversal. */
-export interface TraversalResult {
+export type TraversalResult = {
   entry: string;
   issues: Map<string, IssueNode>;
   relations: Relation[];
@@ -129,7 +129,7 @@ export interface TraversalResult {
 /* Renderable graph                                                            */
 /* -------------------------------------------------------------------------- */
 
-export interface JiraGraphNode {
+export type JiraGraphNode = {
   id: string;
   type: 'jira';
   key: string;
@@ -146,7 +146,7 @@ export interface JiraGraphNode {
 }
 
 /** Commit reference carried on the MR graph node (commits are not nodes). */
-export interface GraphCommitRef {
+export type GraphCommitRef = {
   sha: string;
   shortSha: string;
   title: string;
@@ -155,7 +155,7 @@ export interface GraphCommitRef {
   url?: string;
 }
 
-export interface MergeRequestGraphNode {
+export type MergeRequestGraphNode = {
   id: string;
   type: 'merge_request';
   iid: number;
@@ -171,7 +171,7 @@ export interface MergeRequestGraphNode {
   commits: GraphCommitRef[];
 }
 
-export interface DocGraphNode {
+export type DocGraphNode = {
   id: string;
   type: 'doc';
   source: string;
@@ -184,7 +184,7 @@ export type GraphNode =
   | MergeRequestGraphNode
   | DocGraphNode;
 
-export interface GraphEdge {
+export type GraphEdge = {
   id: string;
   source: string;
   target: string;
@@ -194,7 +194,7 @@ export interface GraphEdge {
   strength: 'strong' | 'weak';
 }
 
-export interface GraphResult {
+export type GraphResult = {
   entry: string;
   stats: TraversalStats & { nodes: number; edges: number };
   nodes: GraphNode[];
@@ -205,7 +205,7 @@ export interface GraphResult {
 /* Normalized LLM context payload                                              */
 /* -------------------------------------------------------------------------- */
 
-export interface ContextWorkItem {
+export type ContextWorkItem = {
   id: string | undefined;
   type: string | undefined;
   title: string | undefined;
@@ -214,19 +214,19 @@ export interface ContextWorkItem {
   parent_id: string | undefined;
 }
 
-export interface ContextBranch {
+export type ContextBranch = {
   name: string;
   last_commit_sha: string | undefined;
 }
 
-export interface ContextCommit {
+export type ContextCommit = {
   sha: string;
   title: string;
   author: string | undefined;
   timestamp: string | undefined;
 }
 
-export interface ContextMergeRequestDetail {
+export type ContextMergeRequestDetail = {
   id: number;
   title: string;
   state: string;
@@ -235,13 +235,13 @@ export interface ContextMergeRequestDetail {
   url: string | undefined;
 }
 
-export interface ContextGitlab {
+export type ContextGitlab = {
   merge_request: ContextMergeRequestDetail;
   branch: ContextBranch | undefined;
   commits: ContextCommit[];
 }
 
-export interface ContextMergeRequestSummary {
+export type ContextMergeRequestSummary = {
   id: number;
   project: string | undefined;
   title: string;
@@ -249,13 +249,13 @@ export interface ContextMergeRequestSummary {
   url: string | undefined;
 }
 
-export interface ContextDoc {
+export type ContextDoc = {
   source: string;
   title: string;
   url: string;
 }
 
-export interface ContextItem {
+export type ContextItem = {
   work_item: ContextWorkItem;
   gitlab: ContextGitlab | undefined;
   merge_requests: ContextMergeRequestSummary[];
@@ -268,12 +268,12 @@ export interface ContextItem {
   documentation: ContextDoc[];
 }
 
-export interface TraceabilityLink {
+export type TraceabilityLink = {
   jira_key: string | undefined;
   merge_request_id: number;
 }
 
-export interface ContextResult {
+export type ContextResult = {
   entry: string;
   items: ContextItem[];
   /** Union of every item's repositories — the repos involved in this context. */

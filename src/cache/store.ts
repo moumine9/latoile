@@ -14,14 +14,14 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-export interface CacheStore {
+export type CacheStore = {
   /** Returns the raw JSON string stored for `key` if it is younger than `ttlMs`. */
   get(key: string, ttlMs: number): string | undefined;
   set(key: string, value: string): void;
   close(): void;
 }
 
-interface CacheRow {
+type CacheRow = {
   value: string;
   fetched_at: number;
 }

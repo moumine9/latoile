@@ -9,21 +9,21 @@ import type {
 } from '../types.js';
 
 /** Minimal Jira issue source contract required by the traversal. */
-export interface IssueSource {
+export type IssueSource = {
   fetchIssue(key: string): Promise<NormalizedIssue | null>;
 }
 
 /** Minimal GitLab source contract required by the traversal. */
-export interface GitlabSource {
+export type GitlabSource = {
   fetchForKey(key: string): Promise<GitlabContext>;
 }
 
-export interface TraverseDeps {
+export type TraverseDeps = {
   acli: IssueSource;
   glab: GitlabSource;
 }
 
-export interface TraverseOptions {
+export type TraverseOptions = {
   maxDepth?: number;
   maxNodes?: number;
   log?: LogFn;
@@ -31,7 +31,7 @@ export interface TraverseOptions {
 
 type AddRelation = (from: string, to: string, relation: string, linkType?: string) => void;
 
-interface Neighbor {
+type Neighbor = {
   key: string;
   relation: string;
   linkType?: string;

@@ -5,7 +5,7 @@ import type { Commit, GitlabContext, LogFn, MergeRequest, RunFn } from '../types
 /* Raw glab / GitLab REST payload shapes (exported for the HTTP client)       */
 /* -------------------------------------------------------------------------- */
 
-export interface RawMergeRequest {
+export type RawMergeRequest = {
   iid?: number;
   id?: number;
   references?: { full?: string };
@@ -24,7 +24,7 @@ export interface RawMergeRequest {
   author?: { username?: string; name?: string };
 }
 
-export interface RawCommit {
+export type RawCommit = {
   id?: string;
   sha?: string;
   short_id?: string;
@@ -38,7 +38,7 @@ export interface RawCommit {
   authored_date?: string;
 }
 
-interface RawProject {
+type RawProject = {
   id?: number;
   path_with_namespace?: string;
   name?: string;
@@ -48,7 +48,7 @@ interface RawProject {
 /* Client                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export interface GlabClientDeps {
+export type GlabClientDeps = {
   run: RunFn;
   bin?: string;
   projects?: string[];

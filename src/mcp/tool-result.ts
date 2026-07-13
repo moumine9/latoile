@@ -4,7 +4,7 @@
  * Every tool returns both a JSON text block (for clients that only render
  * text) and `structuredContent` (validated against the tool's outputSchema).
  */
-export interface ToolResult {
+export type ToolResult = {
   // Index signature required by the SDK's CallToolResult contract.
   [key: string]: unknown;
   content: Array<{ type: 'text'; text: string }>;

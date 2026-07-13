@@ -49,7 +49,7 @@ export * from './tool-result.js';
 const looseObject = (): ReturnType<typeof z.looseObject> => z.looseObject({});
 
 /** Extra argument shape shared by the tool callbacks below. */
-interface ToolCallExtra {
+type ToolCallExtra = {
   _meta?: { progressToken?: string | number };
   sendNotification(notification: {
     method: 'notifications/progress';

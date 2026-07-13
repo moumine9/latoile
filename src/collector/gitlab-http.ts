@@ -60,7 +60,7 @@ export function readGlabToken(host = 'gitlab.com'): string | undefined {
 /* Raw GitLab REST shapes                                                      */
 /* -------------------------------------------------------------------------- */
 
-interface RawProject {
+type RawProject = {
   id?: number;
   path_with_namespace?: string;
   last_activity_at?: string;
@@ -73,7 +73,7 @@ interface RawProject {
 /** Injectable fetch function — matches the global `fetch` signature. */
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
-export interface GitlabHttpClientDeps {
+export type GitlabHttpClientDeps = {
   /** GitLab PAT. Defaults to reading from glab config / LATOILE_GITLAB_TOKEN. */
   token?: string;
   /** GitLab hostname, default `gitlab.com`. */

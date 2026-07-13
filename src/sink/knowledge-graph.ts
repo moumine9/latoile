@@ -14,19 +14,19 @@ export type CypherQueryFn = (
   params: Record<string, unknown>
 ) => Promise<Array<Record<string, unknown>>>;
 
-export interface KnowledgeGraphDeps {
+export type KnowledgeGraphDeps = {
   query: CypherQueryFn;
   close?: () => Promise<void>;
   log?: LogFn;
 }
 
-export interface PathNode {
+export type PathNode = {
   label: string;
   id: string;
   title: string | null;
 }
 
-export interface ConnectionResult {
+export type ConnectionResult = {
   found: boolean;
   /** Alternating description: nodes[0] -rels[0]-> nodes[1] ... */
   nodes: PathNode[];
@@ -34,7 +34,7 @@ export interface ConnectionResult {
 }
 
 /** Issue fields as stored on a `:Issue` node. */
-export interface StoredIssue {
+export type StoredIssue = {
   key: string;
   title?: string;
   type?: string;
@@ -46,7 +46,7 @@ export interface StoredIssue {
 }
 
 /** One edge from an issue to any neighboring node, as seen from the issue. */
-export interface StoredNeighbor {
+export type StoredNeighbor = {
   relation: string;
   direction: 'out' | 'in';
   label: string;
@@ -54,7 +54,7 @@ export interface StoredNeighbor {
   title: string | null;
 }
 
-export interface KnownContextResult {
+export type KnownContextResult = {
   found: boolean;
   issue?: StoredIssue;
   neighbors?: StoredNeighbor[];
@@ -63,7 +63,7 @@ export interface KnownContextResult {
 }
 
 /** Mirrors the live pipeline's ContextItem, rebuilt from stored data. */
-export interface StoredContextItem {
+export type StoredContextItem = {
   work_item: {
     id: string;
     type?: string;
@@ -84,18 +84,18 @@ export interface StoredContextItem {
   commits: StoredCommit[];
 }
 
-export interface StoredCommit {
+export type StoredCommit = {
   sha: string;
   title?: string;
   timestamp?: string;
 }
 
-export interface StoredTraceabilityLink {
+export type StoredTraceabilityLink = {
   jira_key: string;
   merge_request_id: number;
 }
 
-export interface StoredContextResult {
+export type StoredContextResult = {
   found: boolean;
   entry?: string;
   items?: StoredContextItem[];
@@ -106,30 +106,30 @@ export interface StoredContextResult {
   ageSeconds?: number;
 }
 
-export interface ProjectActivityMatch {
+export type ProjectActivityMatch = {
   project: { path: string; gitlabId?: number };
   issues: Array<{ key: string; title?: string; status?: string }>;
   mergeRequests: Array<{ iid: number; title?: string; state?: string }>;
 }
 
-export interface ProjectActivityResult {
+export type ProjectActivityResult = {
   matches: ProjectActivityMatch[];
   sinceDays: number;
 }
 
-export interface PersonActivityMatch {
+export type PersonActivityMatch = {
   person: { key: string; name?: string; jiraName?: string; gitlabUsername?: string };
   issues: Array<{ key: string; title?: string; status?: string }>;
   mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string }>;
   commitCount: number;
 }
 
-export interface PersonActivityResult {
+export type PersonActivityResult = {
   matches: PersonActivityMatch[];
   sinceDays: number;
 }
 
-export interface GraphStatsResult {
+export type GraphStatsResult = {
   nodes: Array<{ label: string; count: number; oldest_first_seen: string | null; newest_last_seen: string | null }>;
   relationships: Array<{ type: string; count: number }>;
 }
@@ -264,7 +264,7 @@ export class KnowledgeGraph {
     );
     if (rows.length === 0) return { found: false };
 
-    interface StoredIssueRow {
+    type StoredIssueRow = {
       issue: StoredIssue;
       parentKey: string | null;
       mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string; url?: string; commits: StoredCommit[] }>;
@@ -368,7 +368,7 @@ export class KnowledgeGraph {
               collect(DISTINCT CASE WHEN d IS NULL THEN NULL ELSE d {.source, .title, .url} END) AS documentation`,
       { key }
     );
-    interface StoredIssueDetailRow {
+    type StoredIssueDetailRow = {
       issue: StoredIssue & { hasGitlabData?: boolean };
       parentKey: string | null;
       subtasks: Array<string | null>;
@@ -427,7 +427,7 @@ export class KnowledgeGraph {
               } END) AS mergeRequests`,
       { key }
     );
-    interface StoredGitlabRow {
+    type StoredGitlabRow = {
       lastSeen: string | null;
       mergeRequests: Array<{
         iid: number;
@@ -499,7 +499,7 @@ export class KnowledgeGraph {
   }
 }
 
-export interface KnowledgeGraphConnection {
+export type KnowledgeGraphConnection = {
   uri: string;
   user: string;
   password: string;

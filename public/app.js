@@ -740,8 +740,9 @@ function showDetails(node) {
         if (Array.isArray(node.commits) && node.commits.length) {
             body += `<div class="section-title">Commits (${node.commits.length})</div><ul class="commit-list">`;
             for (const c of node.commits) {
-                const label = `${c.shortSha || c.sha.slice(0, 7)} ${c.title || ''}`.trim();
-                body += `<li>${link(c.url, label)}</li>`;
+                const sha = c.shortSha || c.sha.slice(0, 7);
+                const message = c.title || sha;
+                body += `<li><span class="commit-sha">${esc(sha)}</span> ${link(c.url, message)}</li>`;
             }
             body += '</ul>';
         }

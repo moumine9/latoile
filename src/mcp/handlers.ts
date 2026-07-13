@@ -36,7 +36,7 @@ function progressLogger(onProgress?: ProgressFn): (msg: string) => void {
 
 /* ------------------------------ get_context ------------------------------- */
 
-export interface GetContextArgs {
+export type GetContextArgs = {
   jiraKey: string;
   maxDepth?: number;
   maxNodes?: number;
@@ -104,7 +104,7 @@ export async function getContextTool(
 /** Pipeline runner for MR entry points — injectable for tests. */
 export type MrPipelineFn = (mrUrl: string, options: BuildContextGraphOptions) => Promise<MrContextGraph>;
 
-export interface GetContextFromMrArgs {
+export type GetContextFromMrArgs = {
   mrUrl: string;
   maxDepth?: number;
   maxNodes?: number;
@@ -159,7 +159,7 @@ export async function searchIssuesTool(
 /* -------------------------------- get_issue ------------------------------- */
 
 /** Minimal issue source contract needed by get_issue; matches the traversal's. */
-export interface IssueFetcher {
+export type IssueFetcher = {
   fetchIssue(key: string): Promise<NormalizedIssue | null>;
 }
 

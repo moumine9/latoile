@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>latoile — Jira × GitLab context graph</title>
+    <title>LaT&#10052;ile — Jira × GitLab context graph</title>
+    <link rel="icon" type="image/png" href="./favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -11,6 +12,21 @@
       href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap"
     />
     <link rel="stylesheet" href="./styles.css" />
+    <script>
+      // Applied synchronously, before CSS renders and before the module
+      // script runs, so the saved theme takes effect with no flash and no
+      // dependency on the rest of app.js executing without error.
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem('latoile-prefs') || '{}');
+          if (prefs.theme === 'light' || prefs.theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', prefs.theme);
+          }
+        } catch (e) {
+          // localStorage unavailable — keep the default theme.
+        }
+      })();
+    </script>
     <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
   </head>
   <body>

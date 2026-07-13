@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../../../public');
 
 /** Per-request traversal overrides parsed from the query string. */
-export interface GraphRunOptions {
+export type GraphRunOptions = {
   maxDepth?: number;
   maxNodes?: number;
   /** Bypass cached reads for this run. */
@@ -31,7 +31,7 @@ export { escapeJqlString } from '../collector/search.js';
 /** Resolves an MR URL to its Jira key; injectable for tests. */
 export type ResolveMrFn = (url: string) => Promise<ResolvedMrEntry>;
 
-export interface CreateAppOptions {
+export type CreateAppOptions = {
   run?: GraphRunFn;
   searchRun?: SearchRunFn;
   resolveMr?: ResolveMrFn;

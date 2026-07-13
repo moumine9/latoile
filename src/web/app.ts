@@ -7,12 +7,12 @@
 
 /* -------------------------- graph payload shapes -------------------------- */
 
-interface DocRef {
+type DocRef = {
   url?: string;
   title?: string;
 }
 
-interface GraphNodeData {
+type GraphNodeData = {
   id: string;
   type: string;
   key?: string;
@@ -49,7 +49,7 @@ interface GraphNodeData {
   }>;
 }
 
-interface GraphEdgeData {
+type GraphEdgeData = {
   id: string;
   source: string;
   target: string;
@@ -58,13 +58,13 @@ interface GraphEdgeData {
   strength?: 'strong' | 'weak';
 }
 
-interface GraphStats {
+type GraphStats = {
   nodes?: number;
   edges?: number;
   fetched?: number;
 }
 
-interface GraphPayload {
+type GraphPayload = {
   nodes: GraphNodeData[];
   edges: GraphEdgeData[];
   stats?: GraphStats;
@@ -73,7 +73,7 @@ interface GraphPayload {
 
 /* --------------------------- minimal cytoscape ---------------------------- */
 
-interface CyElement {
+type CyElement = {
   data(): GraphNodeData;
   data(key: string): string;
   addClass(name: string): void;
@@ -82,17 +82,17 @@ interface CyElement {
   degree(includeLoops: boolean): number;
 }
 
-interface CyCollection {
+type CyCollection = {
   forEach(callback: (element: CyElement) => void): void;
   addClass(name: string): void;
   removeClass(name: string): void;
 }
 
-interface CyEventObject {
+type CyEventObject = {
   target: CyElement | CyCore;
 }
 
-interface CyCore {
+type CyCore = {
   on(event: 'tap', selector: string, handler: (evt: CyEventObject) => void): void;
   on(event: 'tap', handler: (evt: CyEventObject) => void): void;
   edges(): CyCollection;
@@ -108,12 +108,12 @@ interface CyCore {
 
 type StyleValue = string | number | ((element: CyElement) => string | number);
 
-interface CyStylesheet {
+type CyStylesheet = {
   selector: string;
   style: Record<string, StyleValue>;
 }
 
-interface CyLayoutOptions {
+type CyLayoutOptions = {
   name: string;
   animate?: boolean;
   padding?: number;
@@ -123,11 +123,11 @@ interface CyLayoutOptions {
   componentSpacing?: number;
 }
 
-interface CyElementDef {
+type CyElementDef = {
   data: GraphNodeData | GraphEdgeData;
 }
 
-interface CyOptions {
+type CyOptions = {
   container: HTMLElement | null;
   elements: CyElementDef[];
   style: CyStylesheet[];
@@ -177,7 +177,7 @@ function requireElement<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-interface Elements {
+type Elements = {
   form: HTMLFormElement;
   key: HTMLInputElement;
   depth: HTMLInputElement;
@@ -286,7 +286,7 @@ function init(): void {
 
 const PREFS_STORAGE_KEY = 'latoile-prefs';
 
-interface Prefs {
+type Prefs = {
   theme?: string;
   depth?: string;
   nodes?: string;
@@ -501,7 +501,7 @@ function showRecentKeys(): void {
   );
 }
 
-interface SearchResult {
+type SearchResult = {
   key: string;
   summary: string;
   type: string;
@@ -945,8 +945,9 @@ function showDetails(node: GraphNodeData): void {
     if (Array.isArray(node.commits) && node.commits.length) {
       body += `<div class="section-title">Commits (${node.commits.length})</div><ul class="commit-list">`;
       for (const c of node.commits) {
-        const label = `${c.shortSha || c.sha.slice(0, 7)} ${c.title || ''}`.trim();
-        body += `<li>${link(c.url, label)}</li>`;
+        const sha = c.shortSha || c.sha.slice(0, 7);
+        const message = c.title || sha;
+        body += `<li><span class="commit-sha">${esc(sha)}</span> ${link(c.url, message)}</li>`;
       }
       body += '</ul>';
     }

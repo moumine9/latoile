@@ -40,7 +40,7 @@ function loadDotEnv(path = resolve(process.cwd(), '.env')): void {
 
 loadDotEnv();
 
-export interface Config {
+export type Config = {
   /** HTTP port for the live backend. */
   port: number;
   /** Maximum traversal depth from the entry-point Jira issue. */

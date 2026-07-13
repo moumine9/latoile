@@ -5,7 +5,7 @@ import { isJiraKey } from './collector/jiraKeys.js';
 import type { ContextGraph } from './pipeline.js';
 import type { ContextResult, GraphResult, LogFn } from './types.js';
 
-interface CliArgs {
+type CliArgs = {
   view: string;
   out?: string;
   maxDepth?: number;

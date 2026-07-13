@@ -18,14 +18,14 @@ import {
 import type { ContextResult, GraphResult, LogFn, TraversalResult } from './types.js';
 
 /** Both payloads produced by a full pipeline run. */
-export interface ContextGraph {
+export type ContextGraph = {
   graph: GraphResult;
   context: ContextResult;
   /** Issues served from the knowledge graph instead of live (partial refresh). */
   graphServedIssues?: number;
 }
 
-export interface BuildContextGraphOptions {
+export type BuildContextGraphOptions = {
   config?: Config;
   clients?: TraverseDeps;
   log?: LogFn;
@@ -74,7 +74,7 @@ export async function closeSharedSink(): Promise<void> {
   await sink?.close();
 }
 
-export interface CreateClientsOptions {
+export type CreateClientsOptions = {
   /** Cache store override — mainly for tests. Defaults to the shared SQLite store. */
   cache?: CacheStore;
   refresh?: boolean;
@@ -204,9 +204,9 @@ export async function buildContextGraph(
 }
 
 /** ContextGraph plus how the MR entry point was resolved to a Jira key. */
-export interface MrContextGraph extends ContextGraph {
+export type MrContextGraph = {
   resolvedFrom: ResolvedMrEntry;
-}
+} & ContextGraph
 
 /**
  * Runs the pipeline starting from a GitLab merge-request URL: fetches the MR,

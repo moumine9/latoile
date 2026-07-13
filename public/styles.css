@@ -189,6 +189,12 @@ body {
   padding-left: 1.1rem;
 }
 
+.commit-sha {
+  font-family: monospace;
+  color: var(--muted);
+  margin-right: 0.35rem;
+}
+
 .query input[type="number"] { width: 60px; }
 .query label { color: var(--muted); font-size: 0.85rem; display: flex; gap: 0.4rem; align-items: center; font-weight: 600; }
 

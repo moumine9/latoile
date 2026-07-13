@@ -2,7 +2,7 @@ import { execFile, type ExecFileException } from 'node:child_process';
 import type { LogFn, RunFn } from '../types.js';
 
 /** Options accepted by the low-level process runner. */
-export interface RunProcessOptions {
+export type RunProcessOptions = {
   timeoutMs?: number;
   maxBuffer?: number;
 }
@@ -52,7 +52,7 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 export type ExecFn = (bin: string, args: string[], opts?: RunProcessOptions) => Promise<string>;
 
 /** Options for {@link createRunner}. */
-export interface RunnerOptions {
+export type RunnerOptions = {
   exec?: ExecFn;
   delayMs?: number;
   retries?: number;

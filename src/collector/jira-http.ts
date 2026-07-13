@@ -15,7 +15,7 @@ import { normalizeIssue, type RawJiraIssue } from './acli.js';
 import type { FetchFn } from './gitlab-http.js';
 import type { LogFn, NormalizedIssue } from '../types.js';
 
-export interface JiraHttpClientDeps {
+export type JiraHttpClientDeps = {
   /** Base URL of the Jira Cloud instance, e.g. https://your-org.atlassian.net */
   baseUrl: string;
   email: string;

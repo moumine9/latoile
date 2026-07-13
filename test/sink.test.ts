@@ -5,7 +5,7 @@ import { buildContextGraph } from '../src/pipeline.js';
 import type { GraphSink } from '../src/sink/graph-sink.js';
 import type { IssueNode, TraversalResult } from '../src/types.js';
 
-interface RecordedCall {
+type RecordedCall = {
   query: string;
   params: Record<string, unknown>;
 }

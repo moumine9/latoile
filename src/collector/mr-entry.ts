@@ -10,7 +10,7 @@ import { extractJiraKeys } from './jiraKeys.js';
 import type { RawMergeRequest } from './glab.js';
 import type { LogFn } from '../types.js';
 
-export interface ParsedMrUrl {
+export type ParsedMrUrl = {
   host: string;
   project: string;
   iid: number;
@@ -37,11 +37,11 @@ export function parseMrUrl(url: string): ParsedMrUrl | null {
 }
 
 /** Minimal GitLab API contract needed to resolve an MR — matches GitlabHttpClient. */
-export interface MrApiSource {
+export type MrApiSource = {
   apiGet<T>(path: string): Promise<T>;
 }
 
-export interface ResolvedMrEntry {
+export type ResolvedMrEntry = {
   /** The Jira key extracted from the MR. */
   key: string;
   /** Which MR field the key was found in. */

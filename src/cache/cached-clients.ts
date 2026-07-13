@@ -10,7 +10,7 @@ import type { GitlabSource, IssueSource } from '../collector/traversal.js';
 import type { GitlabContext, LogFn, NormalizedIssue } from '../types.js';
 import type { CacheStore } from './store.js';
 
-export interface CachedClientOptions {
+export type CachedClientOptions = {
   store: CacheStore;
   ttlMs: number;
   /** When true, cached reads are skipped but fresh results are still written. */

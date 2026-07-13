@@ -4,7 +4,7 @@ import { traverse, type GitlabSource, type IssueSource } from '../src/collector/
 import { buildGraph, buildContext } from '../src/model/graph.js';
 import type { DocLink, GitlabContext, MergeRequest, NormalizedIssue } from '../src/types.js';
 
-interface FixtureIssue {
+type FixtureIssue = {
   type?: string;
   title?: string;
   status?: string;
@@ -17,7 +17,7 @@ interface FixtureIssue {
 
 type GitlabFixture = Record<string, { mergeRequests: Array<Partial<MergeRequest> & { iid: number }> }>;
 
-interface FakeClients {
+type FakeClients = {
   acli: IssueSource;
   glab: GitlabSource;
   fetched: string[];

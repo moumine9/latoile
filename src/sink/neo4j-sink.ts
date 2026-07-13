@@ -18,7 +18,7 @@ import type { IssueNode, LogFn, Relation, TraversalResult } from '../types.js';
 /** Executes one Cypher statement; injectable for tests. */
 export type CypherRunFn = (query: string, params: Record<string, unknown>) => Promise<void>;
 
-export interface Neo4jSinkDeps {
+export type Neo4jSinkDeps = {
   run: CypherRunFn;
   close?: () => Promise<void>;
   log?: LogFn;
@@ -66,7 +66,7 @@ function relationToEdge(rel: Relation): { from: string; to: string; type: string
   }
 }
 
-interface IssueParam {
+type IssueParam = {
   key: string;
   title: string | null;
   type: string | null;
@@ -292,7 +292,7 @@ export class Neo4jSink implements GraphSink {
   }
 }
 
-export interface Neo4jConnection {
+export type Neo4jConnection = {
   uri: string;
   user: string;
   password: string;

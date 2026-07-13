@@ -8,7 +8,7 @@ import { config } from '../config.js';
 export type SearchRunFn = (bin: string, args: string[]) => Promise<string>;
 
 /** Shape of one row of `acli jira workitem search --json` that we consume. */
-interface RawSearchResult {
+type RawSearchResult = {
   key?: string;
   fields?: {
     summary?: string;
@@ -16,7 +16,7 @@ interface RawSearchResult {
   };
 }
 
-export interface IssueSearchResult {
+export type IssueSearchResult = {
   key: string;
   summary: string;
   type: string;
@@ -44,7 +44,7 @@ async function defaultSearchRun(bin: string, args: string[]): Promise<string> {
   return r(bin, args);
 }
 
-export interface SearchIssuesOptions {
+export type SearchIssuesOptions = {
   limit?: number;
   searchRun?: SearchRunFn;
 }

@@ -8,7 +8,7 @@
  */
 import type { TraversalResult } from '../types.js';
 
-export interface GraphSink {
+export type GraphSink = {
   ingest(result: TraversalResult): Promise<void>;
   close(): Promise<void>;
 }
