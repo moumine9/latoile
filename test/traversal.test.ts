@@ -113,6 +113,22 @@ test('traverse handles unresolved issues without aborting', async () => {
   const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 2 });
   assert.equal(result.issues.get('GONE-1')?.resolved, false);
   assert.equal(result.issues.get('JIRA-1')?.resolved, true);
+  // GONE-1 was actively fetched and Jira returned nothing: missing.
+  assert.equal(result.issues.get('GONE-1')?.missing, true);
+  // JIRA-1 resolved successfully: not missing.
+  assert.equal(result.issues.get('JIRA-1')?.missing, false);
+});
+
+test('traverse leaves unfetched placeholders (depth cap) without a missing flag', async () => {
+  const issues: Record<string, FixtureIssue> = {
+    'JIRA-1': { title: 'Entry', links: [{ key: 'JIRA-2', type: 'relates' }] },
+    'JIRA-2': { title: 'Neighbor' },
+  };
+  const { acli, glab } = makeClients(issues);
+  const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 0 });
+  // JIRA-2 was referenced but never fetched (depth cap) — missing stays undefined.
+  assert.equal(result.issues.get('JIRA-2')?.resolved, false);
+  assert.equal(result.issues.get('JIRA-2')?.missing, undefined);
 });
 
 test('buildGraph produces typed nodes and edges incl. GitLab', async () => {

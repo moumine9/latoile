@@ -23,6 +23,11 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 - **Graph slimming**: branch and commit nodes removed — folded into the MR node (`sourceBranch`, `commitCount`, `commits[]` with URLs) and shown in the details panel; `has_branch`/`has_commit` dropped from `EDGE_SCHEMA`. PV2-17892: 41→12 nodes.
 - **Prefs persisted** (localStorage): theme, depth, nodes; stale 2/100 fallbacks in HTML/JS fixed to 1/50.
 
+## Session 2026-07-14
+
+- **Deleted/moved issue flagging** (see PLAN-NEO4J.md phase 3): `IssueNode.missing` set in `traversal.ts` when a live fetch actively returns nothing (vs. an unfetched depth/cap placeholder, left `undefined`). Persisted as `:Issue.missing` in `Neo4jSink`; `KnowledgeGraph.storedIssue`/`storedGitlabContext` now exclude `missing: true` issues so a confirmed-gone ticket always falls back to a live re-check instead of being served stale forever. Nothing deleted, per the additive principle. Tests added in `test/traversal.test.ts` and `test/sink.test.ts`.
+- **Edge visual hierarchy**: `src/web/app.ts` edge width now varies by strength (`edgeWidth`) — strong structural edges (parent/subtask/link) render at width 2, `has_mr` at 2.5, weak/mention edges at 1 — complementing the existing dashed/dotted line-style distinction.
+
 ## Session 2026-07-13
 
 - **Partial incremental refresh (phase 3a tier 2)**: `src/sink/kg-clients.ts` decorates the traversal's `IssueSource`/`GitlabSource` — issues whose stored `last_seen` is within `maxAgeSeconds` are reconstructed from Neo4j (`storedIssue`/`storedGitlabContext`, incl. MRs, commits, authors, projects), only the stale frontier hits Jira/GitLab. `hasGitlabData` now persisted on `:Issue` so graph-served issues skip GitLab searches. Graph-served issues get `provenance: 'knowledge_graph'` and are filtered out of sink ingestion (`last_seen` = last verified live, never self-refreshing). `get_context` reports `source: 'partial'` + `graphServedIssues`.

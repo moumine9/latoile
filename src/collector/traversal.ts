@@ -117,11 +117,14 @@ export async function traverse(
 
     if (!issue) {
       // Unresolved (permission/not found): keep placeholder, keep traversing.
+      // `missing` marks that we actively fetched and got nothing, as opposed
+      // to a placeholder that was never fetched (depth/node cap).
       node.resolved = false;
+      node.missing = true;
       continue;
     }
 
-    Object.assign(node, issue, { resolved: true, depth: node.depth });
+    Object.assign(node, issue, { resolved: true, depth: node.depth, missing: false });
 
     // Skip GitLab enrichment when Jira's dev-status field confirms there are
     // no associated branches, commits, or MRs for this issue.

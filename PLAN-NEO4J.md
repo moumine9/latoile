@@ -125,8 +125,15 @@ traverse the stale frontier (incremental refresh — the real speed prize).
      Jira/GitLab (`source: 'partial'`, `graphServedIssues` count).
      Graph-served issues carry `provenance: 'knowledge_graph'` and are
      excluded from re-ingestion so `last_seen` always means "last verified
-     live". Still open: deleted/moved issues (mark `missing` rather than
-     delete).
+     live". Deleted/moved issues — ✅ done 2026-07-14: `IssueNode.missing` is
+     set when a live fetch actively returns nothing (vs. an unfetched
+     depth/cap placeholder, which stays `undefined`). `Neo4jSink` persists
+     `:Issue.missing` (`true` on active non-fetch, reset to `false` on a
+     successful resolve, otherwise left unchanged for placeholders never
+     fetched this run) — nothing is deleted, per the additive principle.
+     `storedIssue`/`storedGitlabContext` now require `missing = false`, so a
+     confirmed-gone issue is never served stale from the graph and always
+     falls back to a live re-check.
    - MR diff ingestion (`:File` nodes, `TOUCHES` edges) to unlock "issues
      whose MRs touched file X" — new GitLab API calls, volume concerns, so
      separate design.

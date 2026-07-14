@@ -353,7 +353,7 @@ export class KnowledgeGraph {
    */
   async storedIssue(key: string): Promise<{ issue: NormalizedIssue; ageSeconds: number } | undefined> {
     const rows = await this.deps.query(
-      `MATCH (i:Issue {key: $key}) WHERE i.resolved = true
+      `MATCH (i:Issue {key: $key}) WHERE i.resolved = true AND coalesce(i.missing, false) = false
        OPTIONAL MATCH (parent:Issue)-[:PARENT_OF]->(i)
        OPTIONAL MATCH (i)-[:HAS_SUBTASK]->(st:Issue)
        OPTIONAL MATCH (i)-[l:LINKS_TO]->(li:Issue)
@@ -409,7 +409,7 @@ export class KnowledgeGraph {
    */
   async storedGitlabContext(key: string): Promise<{ context: GitlabContext; ageSeconds: number } | undefined> {
     const rows = await this.deps.query(
-      `MATCH (i:Issue {key: $key}) WHERE i.resolved = true
+      `MATCH (i:Issue {key: $key}) WHERE i.resolved = true AND coalesce(i.missing, false) = false
        OPTIONAL MATCH (i)-[:HAS_MR]->(mr:MergeRequest)
        OPTIONAL MATCH (mr)-[:IN_PROJECT]->(proj:Project)
        OPTIONAL MATCH (mr)-[:AUTHORED_BY]->(author:Person)

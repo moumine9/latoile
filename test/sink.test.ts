@@ -123,6 +123,21 @@ test('Neo4jSink upserts issues including unresolved placeholders', async () => {
   assert.match(issueCall.query, /last_seen/);
 });
 
+test('Neo4jSink marks issues missing when a live fetch actively found nothing', async () => {
+  const { sink, calls } = makeSink();
+  const t = traversal();
+  t.issues.set('PV2-1', issueNode('PV2-1', { resolved: false, missing: true }));
+  await sink.ingest(t);
+  const issueCall = calls.find((c) => c.query.includes('MERGE (n:Issue'));
+  assert.ok(issueCall);
+  const issues = issueCall.params.issues as Array<{ key: string; missing: boolean | null }>;
+  assert.deepEqual(
+    issues.map((i) => [i.key, i.missing]),
+    [['PV2-1', true], ['EPIC-1', null]]
+  );
+  assert.match(issueCall.query, /n\.missing = CASE/);
+});
+
 test('Neo4jSink maps parent direction, keeps mentions, skips siblings', async () => {
   const { sink, calls } = makeSink();
   await sink.ingest(traversal());

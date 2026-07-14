@@ -95,6 +95,12 @@ export type IssueNode = {
   hasGitlabData?: boolean;
   /** Set when the issue came from the knowledge graph, not a live fetch. */
   provenance?: 'knowledge_graph';
+  /**
+   * Set when a live fetch for this key actively returned nothing (not
+   * found/no permission), as opposed to a placeholder that was simply never
+   * fetched (depth/node cap). Distinguishes "gone" from "unexplored".
+   */
+  missing?: boolean;
 }
 
 /** A recorded relationship between two Jira keys. */
