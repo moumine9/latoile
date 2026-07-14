@@ -63,6 +63,18 @@ test('personActivity passes the since cutoff and name', async () => {
   assert.ok(Math.abs(since - expected) < 60_000);
 });
 
+test('staleIssueKeys parameterizes staleness/limit and returns keys oldest-first', async () => {
+  const { graph, queries } = makeGraph([
+    [{ key: 'PV2-1' }, { key: 'PV2-2' }],
+  ] as never);
+  const keys = await graph.staleIssueKeys(1440, 20);
+  assert.deepEqual(keys, ['PV2-1', 'PV2-2']);
+  const call = queries[0];
+  assert.ok(call);
+  assert.deepEqual(call.params, { staleMinutes: 1440, limit: 20 });
+  assert.match(call.query, /ORDER BY i\.last_seen ASC/);
+});
+
 test('knowledge-graph tools error cleanly when unconfigured', async (t) => {
   const { config } = await import('../src/config.js');
   if (config.neo4jUri) {

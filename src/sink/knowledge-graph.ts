@@ -474,6 +474,24 @@ export class KnowledgeGraph {
     return { context, ageSeconds };
   }
 
+  /**
+   * Keys of resolved issues whose `last_seen` is older than `staleMinutes`,
+   * oldest first — the refresh frontier for the background watcher (see
+   * PLAN-NEO4J.md phase 3). Placeholders (never resolved) are excluded: the
+   * watcher re-verifies what it once knew, it doesn't explore.
+   */
+  async staleIssueKeys(staleMinutes: number, limit: number): Promise<string[]> {
+    const rows = await this.deps.query(
+      `MATCH (i:Issue) WHERE i.resolved = true
+         AND i.last_seen < datetime() - duration({minutes: $staleMinutes})
+       RETURN i.key AS key
+       ORDER BY i.last_seen ASC
+       LIMIT $limit`,
+      { staleMinutes, limit }
+    );
+    return rows.map((r) => r.key as string);
+  }
+
   /** Node/relationship counts and freshness bounds — "how much does laToile remember?". */
   async stats(): Promise<GraphStatsResult> {
     const nodes = await this.deps.query(

@@ -27,6 +27,8 @@ laToile should be *alive*: a persistent, ever-growing knowledge graph that remem
 
 - **Deleted/moved issue flagging** (see PLAN-NEO4J.md phase 3): `IssueNode.missing` set in `traversal.ts` when a live fetch actively returns nothing (vs. an unfetched depth/cap placeholder, left `undefined`). Persisted as `:Issue.missing` in `Neo4jSink`; `KnowledgeGraph.storedIssue`/`storedGitlabContext` now exclude `missing: true` issues so a confirmed-gone ticket always falls back to a live re-check instead of being served stale forever. Nothing deleted, per the additive principle. Tests added in `test/traversal.test.ts` and `test/sink.test.ts`.
 - **Edge visual hierarchy**: `src/web/app.ts` edge width now varies by strength (`edgeWidth`) — strong structural edges (parent/subtask/link) render at width 2, `has_mr` at 2.5, weak/mention edges at 1 — complementing the existing dashed/dotted line-style distinction.
+- **MR diff ingestion**: opt-in `GitlabHttpClient.fetchDiffPaths` (`LATOILE_GITLAB_FETCH_FILES=1`) persists changed file paths as `:File`/`TOUCHES` in Neo4j.
+- **Background watcher**: `src/watcher.ts` (`yarn watcher`), a one-shot script meant to run on an external schedule — re-verifies the stalest known issues and logs status/title/assignee changes. See PLAN-NEO4J.md phase 3.
 
 ## Session 2026-07-13
 

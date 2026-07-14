@@ -87,6 +87,10 @@ export type Config = {
   neo4jPassword: string;
   /** Kill switch for the knowledge-graph sink (LATOILE_NEO4J=off). */
   neo4jEnabled: boolean;
+  /** Minutes since last_seen before the watcher considers an issue stale. */
+  watcherStaleMinutes: number;
+  /** Max issues the watcher re-traverses per run. */
+  watcherBatchSize: number;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -137,6 +141,8 @@ export const config: Config = {
   neo4jUser: process.env['LATOILE_NEO4J_USER'] || 'neo4j',
   neo4jPassword: process.env['LATOILE_NEO4J_PASSWORD'] || '',
   neo4jEnabled: process.env['LATOILE_NEO4J'] !== 'off',
+  watcherStaleMinutes: intFromEnv('LATOILE_WATCHER_STALE_MIN', 1440),
+  watcherBatchSize: intFromEnv('LATOILE_WATCHER_BATCH', 20),
 };
 
 export default config;

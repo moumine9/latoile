@@ -111,6 +111,8 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `LATOILE_NEO4J_URI` | _(empty)_ | e.g. `bolt://localhost:7687`; enables the knowledge-graph sink |
 | `LATOILE_NEO4J_USER` / `LATOILE_NEO4J_PASSWORD` | `neo4j` / _(empty)_ | Neo4j credentials |
 | `LATOILE_NEO4J` | `on` | Set to `off` to disable the knowledge-graph sink |
+| `LATOILE_WATCHER_STALE_MIN` | `1440` | Minutes since `last_seen` before `yarn watcher` re-checks an issue |
+| `LATOILE_WATCHER_BATCH` | `20` | Max issues `yarn watcher` re-traverses per run |
 
 A `.env` file in the project root (gitignored) is loaded at startup; shell
 exports win over `.env` values. Set at least `LATOILE_GITLAB_GROUPS` or
@@ -171,6 +173,17 @@ client provides a `progressToken`, and always as logging notifications.
 Configuration comes from the same environment / `.env` as the server, resolved
 from the working directory the MCP server is started in. Run it manually with
 `yarn mcp`.
+
+### Background watcher
+
+`yarn watcher` is a one-shot re-traversal of the stalest issues in the
+knowledge graph — it lists issues whose `last_seen` is older than
+`LATOILE_WATCHER_STALE_MIN` (default 24h), re-fetches up to
+`LATOILE_WATCHER_BATCH` of them (default 20, oldest first), and logs any
+status/title/assignee change it observes. It's a plain script, not a daemon —
+schedule it externally (cron, Windows Task Scheduler) at whatever cadence
+suits your Jira/GitLab rate limits. Requires `LATOILE_NEO4J_URI`; a no-op
+otherwise.
 
 ### Project layout
 

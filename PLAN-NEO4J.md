@@ -145,8 +145,19 @@ traverse the stale frontier (incremental refresh — the real speed prize).
      `Neo4jSink` MERGEs `:File {project, path}` and `(:MergeRequest)-[:TOUCHES]->(:File)`
      when `changedFiles` is populated. Unlocks "issues whose MRs touched file
      X" once a query tool is added — no MCP tool yet, follow-up.
-   - Background watcher (cron/Monitor) feeding the graph + "what changed since
-     Monday" diffing; ties into the MCP resource-subscription idea.
+   - Background watcher — ✅ done 2026-07-14, one-shot script pattern (not a
+     daemon): `src/watcher.ts` (`yarn watcher`) lists `KnowledgeGraph
+     .staleIssueKeys(staleMinutes, limit)` (resolved issues past
+     `LATOILE_WATCHER_STALE_MIN`, oldest `last_seen` first, capped at
+     `LATOILE_WATCHER_BATCH`), re-traverses each at `maxDepth: 0` through the
+     normal `buildContextGraph` (so the existing sink/cache paths do the
+     write), and diffs `knownContext` before/after to log status/title/
+     assignee changes. Scheduling is external (cron/Task Scheduler) — no new
+     process-management code, matching the rest of the CLI surface. Neighbor
+     issues get refreshed on their own schedule as their `last_seen` ages
+     past the threshold, so no separate fan-out logic was needed. The
+     MCP resource-subscription idea (push changes to a connected client) is
+     still open — the watcher only logs today.
 
 ## Risks / open questions
 

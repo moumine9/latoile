@@ -23,7 +23,9 @@
     "premcp": "tsc -p tsconfig.json",
     "mcp": "node dist/src/mcp/server.js",
     "presmoke": "tsc -p tsconfig.json",
-    "smoke": "node scripts/smoke-mcp.mjs"
+    "smoke": "node scripts/smoke-mcp.mjs",
+    "prewatcher": "tsc -p tsconfig.json",
+    "watcher": "node dist/src/watcher.js"
   },
   "engines": {
     "node": ">=22.13"
