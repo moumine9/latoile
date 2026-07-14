@@ -66,6 +66,11 @@ type RawProject = {
   last_activity_at?: string;
 }
 
+type RawDiff = {
+  old_path?: string;
+  new_path?: string;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Client                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -86,6 +91,11 @@ export type GitlabHttpClientDeps = {
   activeDays?: number;
   /** Max concurrent requests (default 20 — safe with fetch keep-alive). */
   concurrency?: number;
+  /**
+   * Opt-in: fetch each MR's changed file paths (one extra API call per MR).
+   * Off by default — volume scales with MR count per traversal.
+   */
+  fetchChangedFiles?: boolean;
   /** Fetch implementation — injectable for tests. */
   fetch?: FetchFn;
   log?: LogFn;
@@ -107,6 +117,7 @@ export class GitlabHttpClient {
   groups: string[];
   activeDays: number;
   concurrency: number;
+  fetchChangedFiles: boolean;
   fetch: FetchFn;
   log: LogFn;
   _cachedProjects: string[] | null;
@@ -118,6 +129,7 @@ export class GitlabHttpClient {
     groups = [],
     activeDays = 90,
     concurrency = 20,
+    fetchChangedFiles = false,
     fetch: fetchImpl = globalThis.fetch,
     log = () => {},
   }: GitlabHttpClientDeps) {
@@ -127,6 +139,7 @@ export class GitlabHttpClient {
     this.groups = Array.isArray(groups) ? groups : [];
     this.activeDays = activeDays > 0 ? activeDays : 90;
     this.concurrency = concurrency > 0 ? concurrency : 20;
+    this.fetchChangedFiles = fetchChangedFiles;
     this.fetch = fetchImpl;
     this.log = log;
     this._cachedProjects = null;
@@ -240,6 +253,15 @@ export class GitlabHttpClient {
         }
         return [];
       });
+      if (this.fetchChangedFiles) {
+        mr.changedFiles = await this.fetchDiffPaths(mr).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes('403')) {
+            this.log(`gitlab: diffs failed for MR ${project}!${mr.iid}: ${msg}`);
+          }
+          return [];
+        });
+      }
       mergeRequests.push(mr);
     }
     return mergeRequests;
@@ -253,6 +275,31 @@ export class GitlabHttpClient {
       `projects/${encoded}/merge_requests/${mr.iid}/commits`
     );
     return data.map(normalizeCommit).filter((c): c is Commit => c !== null);
+  }
+
+  /**
+   * Fetches the distinct file paths an MR touches (paths only, no diff
+   * content — keeps the payload small). Uses the paginated `diffs` endpoint;
+   * one extra API call per MR page, so this is only invoked when
+   * `fetchChangedFiles` is enabled.
+   */
+  async fetchDiffPaths(mr: MergeRequest): Promise<string[]> {
+    if (!mr.project || !mr.iid) return [];
+    const encoded = encodeURIComponent(mr.project);
+    const paths = new Set<string>();
+    let page = 1;
+    for (;;) {
+      const data = await this.apiGet<RawDiff[]>(
+        `projects/${encoded}/merge_requests/${mr.iid}/diffs?per_page=100&page=${page}`
+      );
+      for (const d of data) {
+        const path = d.new_path || d.old_path;
+        if (path) paths.add(path);
+      }
+      if (data.length < 100) break;
+      page++;
+    }
+    return [...paths];
   }
 
   /**

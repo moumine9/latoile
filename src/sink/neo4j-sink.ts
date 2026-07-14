@@ -31,6 +31,7 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT person_key IF NOT EXISTS FOR (n:Person) REQUIRE n.key IS UNIQUE',
   'CREATE CONSTRAINT doc_url IF NOT EXISTS FOR (n:Doc) REQUIRE n.url IS UNIQUE',
   'CREATE CONSTRAINT project_path IF NOT EXISTS FOR (n:Project) REQUIRE n.path IS UNIQUE',
+  'CREATE CONSTRAINT file_key IF NOT EXISTS FOR (n:File) REQUIRE (n.project, n.path) IS UNIQUE',
 ];
 
 /**
@@ -180,6 +181,7 @@ export class Neo4jSink implements GraphSink {
     // Merge requests (with author) and their commits (with author).
     const mrs: Array<Record<string, unknown>> = [];
     const commits: Array<Record<string, unknown>> = [];
+    const files: Array<{ project: string; iid: number; path: string }> = [];
     for (const node of nodes) {
       for (const mr of node.gitlab?.mergeRequests ?? []) {
         const project = mr.project ?? 'default';
@@ -196,6 +198,9 @@ export class Neo4jSink implements GraphSink {
           author: mr.author ?? null,
           authorKey: mr.author ? personKey(mr.author) : null,
         });
+        for (const path of mr.changedFiles ?? []) {
+          files.push({ project, iid: mr.iid, path });
+        }
         for (const commit of mr.commits ?? []) {
           commits.push({
             project,
@@ -263,6 +268,18 @@ export class Neo4jSink implements GraphSink {
          MERGE (cm)-[ar:AUTHORED_BY]->(p)
          SET ar.last_seen = datetime())`,
       { commits }
+    );
+
+    // Files touched (opt-in — only populated when file-diff ingestion is enabled).
+    await run(
+      `UNWIND $files AS f
+       MATCH (mr:MergeRequest {project: f.project, iid: f.iid})
+       MERGE (file:File {project: f.project, path: f.path})
+       ON CREATE SET file.first_seen = datetime()
+       SET file.last_seen = datetime()
+       MERGE (mr)-[t:TOUCHES]->(file)
+       SET t.last_seen = datetime()`,
+      { files }
     );
 
     // Documentation links.

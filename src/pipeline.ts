@@ -117,6 +117,7 @@ export function createClients(
     groups: config.gitlabGroups,
     activeDays: config.gitlabActiveDays,
     concurrency: config.gitlabConcurrency,
+    fetchChangedFiles: config.gitlabFetchChangedFiles,
     log,
   });
 

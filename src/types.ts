@@ -65,6 +65,8 @@ export type MergeRequest = {
   url: string | undefined;
   author: string | undefined;
   commits: Commit[];
+  /** File paths touched by this MR. Only populated when file-diff ingestion is enabled. */
+  changedFiles?: string[];
 }
 
 /** All GitLab context resolved for a single Jira key. */

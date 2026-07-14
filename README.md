@@ -97,6 +97,7 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `LATOILE_GITLAB_ACTIVE_DAYS` | `90` | Skip group projects with no activity in this many days |
 | `LATOILE_GITLAB_CONCURRENCY` | `8` | Max parallel GitLab API requests |
 | `LATOILE_GITLAB_TOKEN` | _(empty)_ | Override the token normally read from glab's config |
+| `LATOILE_GITLAB_FETCH_FILES` | _(off)_ | Set to `1` to fetch each MR's changed file paths (persisted as `:File`/`TOUCHES` in the knowledge graph); one extra API call per MR |
 | `LATOILE_JIRA_URL` | _(empty)_ | e.g. `https://your-org.atlassian.net`; enables the direct Jira HTTP client |
 | `LATOILE_JIRA_EMAIL` | _(empty)_ | Atlassian account email (used with `LATOILE_JIRA_TOKEN`) |
 | `LATOILE_JIRA_TOKEN` | _(empty)_ | Atlassian API token — when set with URL+email, replaces acli (~15× faster) |

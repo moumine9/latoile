@@ -65,6 +65,8 @@ export type Config = {
   gitlabConcurrency: number;
   /** Projects inactive for longer than this many days are skipped in group scans. */
   gitlabActiveDays: number;
+  /** Opt-in: fetch each MR's changed file paths (one extra API call per MR). */
+  gitlabFetchChangedFiles: boolean;
   /** Jira Cloud base URL for the direct HTTP client (e.g. https://org.atlassian.net). */
   jiraUrl: string;
   /** Atlassian account email for Jira API basic auth. */
@@ -123,6 +125,7 @@ export const config: Config = {
   /** How many projects to search in parallel. Prevents spawning hundreds of glab processes at once. */
   gitlabConcurrency: intFromEnv('LATOILE_GITLAB_CONCURRENCY', 8),
   gitlabActiveDays: intFromEnv('LATOILE_GITLAB_ACTIVE_DAYS', 90),
+  gitlabFetchChangedFiles: process.env['LATOILE_GITLAB_FETCH_FILES'] === '1',
   jiraUrl: process.env['LATOILE_JIRA_URL'] || '',
   jiraEmail: process.env['LATOILE_JIRA_EMAIL'] || '',
   jiraToken: process.env['LATOILE_JIRA_TOKEN'] || '',

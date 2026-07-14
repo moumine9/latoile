@@ -72,14 +72,14 @@ test('Neo4jSink creates constraints and runs the person migration once', async (
   const { sink, calls } = makeSink();
   await sink.ingest(traversal());
   const constraintCount = calls.filter((c) => c.query.startsWith('CREATE CONSTRAINT')).length;
-  assert.equal(constraintCount, 6);
+  assert.equal(constraintCount, 7);
   assert.equal(calls.filter((c) => c.query.startsWith('DROP CONSTRAINT person_name')).length, 1);
   assert.equal(calls.filter((c) => c.query.includes('DETACH DELETE p')).length, 1);
   // Migration also drops people written under an older key derivation.
   assert.equal(calls.filter((c) => c.query.includes('p.schemaVersion, 1) <')).length, 1);
   await sink.ingest(traversal());
   const after = calls.filter((c) => c.query.startsWith('CREATE CONSTRAINT')).length;
-  assert.equal(after, 6);
+  assert.equal(after, 7);
 });
 
 test('Neo4jSink merges people on the canonical identity key', async () => {
@@ -170,6 +170,31 @@ test('Neo4jSink persists MRs, commits, people, and docs', async () => {
   const docCall = calls.find((c) => c.query.includes('MERGE (doc:Doc'));
   assert.ok(docCall);
   assert.equal((docCall.params.docs as Array<{ url: string }>)[0]?.url, 'https://c/1');
+});
+
+test('Neo4jSink persists changed files as :File nodes with TOUCHES edges', async () => {
+  const { sink, calls } = makeSink();
+  const t = traversal();
+  const mr = t.issues.get('PV2-1')?.gitlab?.mergeRequests[0];
+  assert.ok(mr);
+  mr.changedFiles = ['src/a.ts', 'src/b.ts'];
+  await sink.ingest(t);
+
+  const fileCall = calls.find((c) => c.query.includes('MERGE (file:File'));
+  assert.ok(fileCall);
+  assert.deepEqual(fileCall.params.files, [
+    { project: 'grp/proj', iid: 6606, path: 'src/a.ts' },
+    { project: 'grp/proj', iid: 6606, path: 'src/b.ts' },
+  ]);
+  assert.match(fileCall.query, /TOUCHES/);
+});
+
+test('Neo4jSink sends an empty files array when no MR carries changedFiles', async () => {
+  const { sink, calls } = makeSink();
+  await sink.ingest(traversal());
+  const fileCall = calls.find((c) => c.query.includes('MERGE (file:File'));
+  assert.ok(fileCall);
+  assert.deepEqual(fileCall.params.files, []);
 });
 
 test('pipeline feeds the sink and survives sink failures', async () => {

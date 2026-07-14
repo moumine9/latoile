@@ -35,6 +35,7 @@ Nodes (all carry `first_seen`, `last_seen` datetimes):
 | `:Person` | `key` (canonical identity: first-name initials, one per hyphenated part, + last name — `kvervilleparis`, `jsroy`) | name (best display form), jiraName, gitlabUsername, schemaVersion |
 | `:Project` | `path` (e.g. `familiprix/priorx/fee-matrix`) | gitlabId (numeric API id) |
 | `:Doc` | `url` | source, title |
+| `:File` | `project + path` | (opt-in, see phase 3) |
 
 `:Project` is first-class because work items span several repos
 (microservices + microfrontends): a fix routinely lands 2–3 MRs in different
@@ -53,6 +54,7 @@ Relationships (mirror `EDGE_SCHEMA` semantics, plus what the viz dropped):
 - `(:Commit)-[:AUTHORED_BY]->(:Person)`, `(:Issue)-[:ASSIGNED_TO]->(:Person)`,
   `(:MergeRequest)-[:AUTHORED_BY]->(:Person)`
 - `(:Issue)-[:DOCUMENTED_BY]->(:Doc)`
+- `(:MergeRequest)-[:TOUCHES]->(:File)` (opt-in, see phase 3)
 
 Constraints at startup: uniqueness on each label's key (`CREATE CONSTRAINT IF
 NOT EXISTS`). Person nodes carry a `schemaVersion`; when the key derivation
@@ -134,9 +136,15 @@ traverse the stale frontier (incremental refresh — the real speed prize).
      `storedIssue`/`storedGitlabContext` now require `missing = false`, so a
      confirmed-gone issue is never served stale from the graph and always
      falls back to a live re-check.
-   - MR diff ingestion (`:File` nodes, `TOUCHES` edges) to unlock "issues
-     whose MRs touched file X" — new GitLab API calls, volume concerns, so
-     separate design.
+   - MR diff ingestion (`:File` nodes, `TOUCHES` edges) — ✅ done 2026-07-14,
+     opt-in. `GitlabHttpClient.fetchDiffPaths(mr)` calls the paginated
+     `merge_requests/{iid}/diffs` endpoint (paths only, no diff content) and
+     populates `MergeRequest.changedFiles`; gated behind
+     `fetchChangedFiles` (constructor option) / `LATOILE_GITLAB_FETCH_FILES=1`
+     (config), off by default since it's one extra API call per MR.
+     `Neo4jSink` MERGEs `:File {project, path}` and `(:MergeRequest)-[:TOUCHES]->(:File)`
+     when `changedFiles` is populated. Unlocks "issues whose MRs touched file
+     X" once a query tool is added — no MCP tool yet, follow-up.
    - Background watcher (cron/Monitor) feeding the graph + "what changed since
      Monday" diffing; ties into the MCP resource-subscription idea.
 
