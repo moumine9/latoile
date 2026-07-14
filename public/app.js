@@ -591,6 +591,13 @@ function nodeSize(ele) {
         return 26;
     return Math.min(44, 24 + ele.degree(false) * 2);
 }
+/** Structural (strong) edges read as thicker/more prominent than text mentions. */
+function edgeWidth(ele) {
+    const type = ele.data('type');
+    if (type === 'has_mr')
+        return 2.5;
+    return ele.data('strength') === 'weak' ? 1 : 2;
+}
 function edgeColorFor(type) {
     const colors = getTypeColors();
     const byType = {
@@ -648,7 +655,7 @@ function cyStyle() {
         {
             selector: 'edge',
             style: {
-                width: 1.5,
+                width: (ele) => edgeWidth(ele),
                 'line-color': (ele) => edgeColorFor(ele.data('type')),
                 'target-arrow-color': (ele) => edgeColorFor(ele.data('type')),
                 'target-arrow-shape': 'triangle',
