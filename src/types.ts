@@ -20,6 +20,17 @@ export type DocLink = {
   url: string;
 }
 
+/**
+ * A comment on a Jira issue, normalized to plain text. Comments are not graph
+ * nodes — they ride on the issue (like commits ride on the MR) and feed the
+ * LLM context payload and mention extraction.
+ */
+export type IssueComment = {
+  author: string;
+  created: string;
+  body: string;
+}
+
 /** An issue normalized from the Atlassian CLI payload. */
 export type NormalizedIssue = {
   key: string | undefined;
@@ -33,6 +44,7 @@ export type NormalizedIssue = {
   mentions: string[];
   documentation: DocLink[];
   description: string;
+  comments: IssueComment[];
   /** Derived from Jira's dev-status field. undefined = unknown; false = confirmed none. */
   hasGitlabData?: boolean;
   /**
@@ -92,6 +104,7 @@ export type IssueNode = {
   mentions: string[];
   documentation: DocLink[];
   description?: string;
+  comments?: IssueComment[];
   gitlab: GitlabContext;
   /** Derived from Jira's dev-status field. undefined = unknown; false = confirmed none. */
   hasGitlabData?: boolean;
@@ -263,6 +276,12 @@ export type ContextDoc = {
   url: string;
 }
 
+export type ContextComment = {
+  author: string;
+  created: string;
+  body: string;
+}
+
 export type ContextItem = {
   work_item: ContextWorkItem;
   gitlab: ContextGitlab | undefined;
@@ -274,6 +293,11 @@ export type ContextItem = {
    */
   repositories: string[];
   documentation: ContextDoc[];
+  /**
+   * Issue comments (most recent last, capped). Comments often carry key
+   * behavior decisions that never make it into the description.
+   */
+  comments: ContextComment[];
 }
 
 export type TraceabilityLink = {

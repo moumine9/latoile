@@ -20,6 +20,7 @@ function normalizedIssue(key: string): NormalizedIssue {
     mentions: [],
     documentation: [],
     description: '',
+    comments: [],
   };
 }
 

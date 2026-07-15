@@ -11,6 +11,7 @@
  * assert queries/params without a database; `createNeo4jSink` wires it to the
  * real driver (lazily imported so nothing loads when Neo4j is unconfigured).
  */
+import { encodeStoredComment } from './comment-codec.js';
 import type { GraphSink } from './graph-sink.js';
 import { isDisplayName, personKey, PERSON_SCHEMA_VERSION } from './person-identity.js';
 import type { IssueNode, LogFn, Relation, TraversalResult } from '../types.js';
@@ -78,7 +79,12 @@ type IssueParam = {
   hasGitlabData: boolean | null;
   /** Tri-state: true/false when actively fetched this run, null = not fetched (placeholder). */
   missing: boolean | null;
+  /** JSON-encoded comments (see comment-codec); null = not fetched this run. */
+  comments: string[] | null;
 }
+
+/** Comments persisted per issue; long threads are capped at the most recent. */
+const MAX_STORED_COMMENTS = 20;
 
 function issueParam(node: IssueNode): IssueParam {
   return {
@@ -90,6 +96,9 @@ function issueParam(node: IssueNode): IssueParam {
     resolved: Boolean(node.resolved),
     hasGitlabData: node.hasGitlabData ?? null,
     missing: node.missing ?? null,
+    comments: node.comments
+      ? node.comments.slice(-MAX_STORED_COMMENTS).map(encodeStoredComment)
+      : null,
   };
 }
 
@@ -133,6 +142,7 @@ export class Neo4jSink implements GraphSink {
            n.assignee = coalesce(i.assignee, n.assignee),
            n.resolved = coalesce(n.resolved, false) OR i.resolved,
            n.hasGitlabData = coalesce(i.hasGitlabData, n.hasGitlabData),
+           n.comments = coalesce(i.comments, n.comments),
            n.missing = CASE WHEN i.missing = true THEN true
                             WHEN i.resolved THEN false
                             ELSE coalesce(n.missing, false) END`,

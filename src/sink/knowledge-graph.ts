@@ -5,8 +5,9 @@
  * sink, the class depends on an injectable query function so unit tests need
  * no database; `createKnowledgeGraph` wires the real driver lazily.
  */
+import { decodeStoredComments } from './comment-codec.js';
 import { normalizePersonToken } from './person-identity.js';
-import type { GitlabContext, LogFn, NormalizedIssue } from '../types.js';
+import type { GitlabContext, IssueComment, LogFn, NormalizedIssue } from '../types.js';
 
 /** Runs one read query and returns the result rows as plain objects. */
 export type CypherQueryFn = (
@@ -43,6 +44,8 @@ export type StoredIssue = {
   resolved?: boolean;
   first_seen?: string;
   last_seen?: string;
+  /** JSON-encoded comments as persisted by the sink (see comment-codec). */
+  comments?: string[];
 }
 
 /** One edge from an issue to any neighboring node, as seen from the issue. */
@@ -82,6 +85,7 @@ export type StoredContextItem = {
   /** Distinct GitLab project paths this work item's MRs live in. */
   repositories: string[];
   commits: StoredCommit[];
+  comments: IssueComment[];
 }
 
 export type StoredCommit = {
@@ -256,7 +260,7 @@ export class KnowledgeGraph {
        WITH i, parent, collect(CASE WHEN mr IS NULL THEN NULL ELSE
          mr {.project, .iid, .title, .state, .sourceBranch, .targetBranch, .url, commits: commits}
        END) AS mrs
-       RETURN i {.key, .title, .type, .status, .assignee, .resolved,
+       RETURN i {.key, .title, .type, .status, .assignee, .resolved, .comments,
                  last_seen: toString(i.last_seen)} AS issue,
               parent.key AS parentKey,
               [m IN mrs WHERE m IS NOT NULL] AS mergeRequests`,
@@ -308,6 +312,7 @@ export class KnowledgeGraph {
         })),
         repositories,
         commits: raw.mergeRequests.flatMap((mr) => mr.commits),
+        comments: decodeStoredComments(raw.issue.comments),
       });
       for (const mr of raw.mergeRequests) {
         links.push({ jira_key: raw.issue.key, merge_request_id: mr.iid });
@@ -359,7 +364,7 @@ export class KnowledgeGraph {
        OPTIONAL MATCH (i)-[l:LINKS_TO]->(li:Issue)
        OPTIONAL MATCH (i)-[:MENTIONS]->(mi:Issue)
        OPTIONAL MATCH (i)-[:DOCUMENTED_BY]->(d:Doc)
-       RETURN i {.key, .title, .type, .status, .assignee, .hasGitlabData,
+       RETURN i {.key, .title, .type, .status, .assignee, .hasGitlabData, .comments,
                  last_seen: toString(i.last_seen)} AS issue,
               parent.key AS parentKey,
               collect(DISTINCT st.key) AS subtasks,
@@ -397,6 +402,7 @@ export class KnowledgeGraph {
         .filter((d): d is { source?: string; title?: string; url: string } => d !== null)
         .map((d) => ({ source: d.source ?? 'web', title: d.title ?? d.url, url: d.url })),
       description: '',
+      comments: decodeStoredComments(row.issue.comments),
       hasGitlabData: row.issue.hasGitlabData,
     };
     return { issue, ageSeconds };

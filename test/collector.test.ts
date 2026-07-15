@@ -50,7 +50,11 @@ test('normalizeIssue maps Jira REST shape', () => {
         { type: { inward: 'is blocked by' }, inwardIssue: { key: 'JIRA-50' } },
       ],
       description: 'See also JIRA-300 for context',
-      comment: { comments: [{ body: 'Ping JIRA-400' }] },
+      comment: {
+        comments: [
+          { body: 'Ping JIRA-400', author: { displayName: 'Bob' }, created: '2026-07-01T10:00:00.000+0000' },
+        ],
+      },
     },
   };
   const issue = normalizeIssue(raw);
@@ -65,6 +69,9 @@ test('normalizeIssue maps Jira REST shape', () => {
     ['JIRA-200', 'JIRA-50']
   );
   assert.deepEqual(issue.mentions.sort(), ['JIRA-300', 'JIRA-400']);
+  assert.deepEqual(issue.comments, [
+    { author: 'Bob', created: '2026-07-01T10:00:00.000+0000', body: 'Ping JIRA-400' },
+  ]);
 });
 
 test('normalizeIssue tolerates flat / missing fields', () => {

@@ -117,6 +117,7 @@ test('GET /api/graph/:key?view=context returns context payload', async () => {
             merge_requests: [],
             repositories: [],
             documentation: [],
+            comments: [],
           },
         ],
         repositories: [],

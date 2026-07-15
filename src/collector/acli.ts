@@ -1,5 +1,5 @@
 import { extractJiraKeys, isJiraKey } from './jiraKeys.js';
-import type { DocLink, IssueLink, LogFn, NormalizedIssue, RunFn } from '../types.js';
+import type { DocLink, IssueComment, IssueLink, LogFn, NormalizedIssue, RunFn } from '../types.js';
 
 /* -------------------------------------------------------------------------- */
 /* Raw acli / Jira REST payload shapes                                         */
@@ -44,6 +44,8 @@ type JiraIssueLink = {
 
 type JiraComment = {
   body?: JiraDescription;
+  author?: JiraUser | string;
+  created?: string;
 }
 
 type JiraRemoteLinkObject = {
@@ -288,7 +290,7 @@ export function normalizeIssue(raw: RawJiraIssue, requestedKey?: string): Normal
     firstDefined(root.remoteLinks, fields.remoteLinks, root.documentation)
   );
 
-  const mentionText = [descriptionText, ...comments].join('\n');
+  const mentionText = [descriptionText, ...comments.map((c) => c.body)].join('\n');
   const mentions = extractJiraKeys(mentionText).filter((k) => k !== key);
 
   const hasGitlabData = parseDevInfoHint(firstDefined(fields.customfield_10000));
@@ -305,6 +307,7 @@ export function normalizeIssue(raw: RawJiraIssue, requestedKey?: string): Normal
     mentions,
     documentation,
     description: descriptionText,
+    comments,
     hasGitlabData,
   };
 }
@@ -316,11 +319,19 @@ function normalizeSubtasks(subtasks: Array<JiraIssueRef | string> | undefined): 
     .filter(isJiraKey);
 }
 
-function normalizeComments(comments: Array<JiraComment | string> | undefined): string[] {
+function normalizeComments(comments: Array<JiraComment | string> | undefined): IssueComment[] {
   if (!Array.isArray(comments)) return [];
-  return comments
-    .map((c) => (typeof c === 'string' ? c : textFromDescription(c.body)))
-    .filter((text): text is string => Boolean(text));
+  const out: IssueComment[] = [];
+  for (const c of comments) {
+    if (typeof c === 'string') {
+      if (c) out.push({ author: '', created: '', body: c });
+      continue;
+    }
+    const body = textFromDescription(c.body);
+    if (!body) continue;
+    out.push({ author: userName(c.author) ?? '', created: c.created ?? '', body });
+  }
+  return out;
 }
 
 /**

@@ -259,6 +259,13 @@ and JSON export, and double-clicking a node opens it in Jira or GitLab (set
       "url": "https://confluence.example.com/display/TEAM/Checkout+Validation"
     }
   ],
+  "comments": [
+    {
+      "author": "user",
+      "created": "2026-07-09T14:30:00Z",
+      "body": "Validation must also fire on quantity change, see JIRA-456."
+    }
+  ],
   "traceability": {
     "links": [
       {

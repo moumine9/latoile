@@ -52,6 +52,12 @@ export const EDGE_SCHEMA: Readonly<
 /** Edge types that express a text-mention rather than a structural Jira link. */
 const WEAK_EDGE_TYPES = new Set<string>(['mention']);
 
+/**
+ * Comments kept per work item in the context payload (most recent). Long
+ * threads would otherwise dwarf the rest of the payload.
+ */
+const MAX_CONTEXT_COMMENTS = 20;
+
 function mrNodeId(mr: MergeRequest): string {
   return `mr:${mr.project || 'default'}!${mr.iid}`;
 }
@@ -227,6 +233,11 @@ export function buildContext(traversal: TraversalResult): ContextResult {
         source: d.source,
         title: d.title,
         url: d.url,
+      })),
+      comments: (issue.comments || []).slice(-MAX_CONTEXT_COMMENTS).map((c) => ({
+        author: c.author,
+        created: c.created,
+        body: c.body,
       })),
     });
   }

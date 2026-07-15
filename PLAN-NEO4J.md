@@ -29,7 +29,7 @@ Nodes (all carry `first_seen`, `last_seen` datetimes):
 
 | Label | Key (MERGE on) | Properties |
 | --- | --- | --- |
-| `:Issue` | `key` | title, type, status, assignee, resolved, url |
+| `:Issue` | `key` | title, type, status, assignee, resolved, url, comments (JSON strings, 20 most recent — see `src/sink/comment-codec.ts`) |
 | `:MergeRequest` | `project + iid` | title, state, sourceBranch, targetBranch, url |
 | `:Commit` | `sha` | title, timestamp |
 | `:Person` | `key` (canonical identity: first-name initials, one per hyphenated part, + last name — `kvervilleparis`, `jsroy`) | name (best display form), jiraName, gitlabUsername, schemaVersion |
