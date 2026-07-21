@@ -305,12 +305,35 @@ export type TraceabilityLink = {
   merge_request_id: number;
 }
 
+/**
+ * Traversal completeness, so a consumer can tell a genuine empty neighborhood
+ * from one that was truncated by the depth/node budget. `node_cap_hit` and
+ * `depth_limit_hit` are kept separate because they imply different remedies
+ * (raise `maxNodes` vs. raise `maxDepth`).
+ */
+export type ContextTraversalInfo = {
+  /** Issues actually fetched and resolved. */
+  nodes_fetched: number;
+  /** Nodes discovered, including unresolved placeholders beyond the budget. */
+  total_nodes: number;
+  /** Deepest resolved issue's distance from the entry key. */
+  depth_reached: number;
+  max_depth: number;
+  max_nodes: number;
+  /** The node cap stopped further fetching — raise `maxNodes` for more. */
+  node_cap_hit: boolean;
+  /** Neighbors past `maxDepth` were left unresolved — raise `maxDepth` for more. */
+  depth_limit_hit: boolean;
+}
+
 export type ContextResult = {
   entry: string;
   items: ContextItem[];
   /** Union of every item's repositories — the repos involved in this context. */
   repositories: string[];
   traceability: { links: TraceabilityLink[] };
+  /** Present on live/partial and knowledge-graph-served payloads. */
+  traversal?: ContextTraversalInfo;
 }
 
 /** A function that runs a CLI binary with an argument vector. */

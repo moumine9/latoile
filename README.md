@@ -90,12 +90,13 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | Backend HTTP port |
-| `LATOILE_MAX_DEPTH` | `1` | Traversal depth from the entry point |
-| `LATOILE_MAX_NODES` | `50` | Hard cap on fetched Jira nodes |
+| `LATOILE_MAX_DEPTH` | `2` | Traversal depth from the entry point |
+| `LATOILE_MAX_NODES` | `100` | Hard cap on fetched Jira nodes |
 | `LATOILE_GITLAB_PROJECTS` | _(empty)_ | Comma-separated `group/project` paths to search (takes precedence over groups) |
 | `LATOILE_GITLAB_GROUPS` | _(empty)_ | Comma-separated group paths or IDs; projects are enumerated once per run |
 | `LATOILE_GITLAB_ACTIVE_DAYS` | `90` | Skip group projects with no activity in this many days |
-| `LATOILE_GITLAB_CONCURRENCY` | `8` | Max parallel GitLab API requests |
+| `LATOILE_GITLAB_CONCURRENCY` | `8` | Max parallel GitLab API requests — lower it if you hit 429s |
+| `LATOILE_GITLAB_MAX_RETRIES` | `4` | Retries on an HTTP 429, honoring `Retry-After`/`RateLimit-Reset` with capped backoff |
 | `LATOILE_GITLAB_TOKEN` | _(empty)_ | Override the token normally read from glab's config |
 | `LATOILE_GITLAB_FETCH_FILES` | _(off)_ | Set to `1` to fetch each MR's changed file paths (persisted as `:File`/`TOUCHES` in the knowledge graph); one extra API call per MR |
 | `LATOILE_JIRA_URL` | _(empty)_ | e.g. `https://your-org.atlassian.net`; enables the direct Jira HTTP client |
@@ -274,9 +275,24 @@ and JSON export, and double-clicking a node opens it in Jira or GitLab (set
         "commit_sha": "abc123..."
       }
     ]
+  },
+  "traversal": {
+    "nodes_fetched": 5,
+    "total_nodes": 8,
+    "depth_reached": 2,
+    "max_depth": 2,
+    "max_nodes": 100,
+    "node_cap_hit": false,
+    "depth_limit_hit": true
   }
 }
 ```
+
+`traversal` reports how complete the walk was, so a consumer can tell a genuine
+empty neighborhood from a budget-truncated one. `node_cap_hit` (raise `maxNodes`)
+and `depth_limit_hit` (raise `maxDepth`) are kept separate because they imply
+different remedies — at the default depth of 2, `depth_limit_hit` is often `true`
+on non-trivial graphs, which is expected, not an error.
 
 ### Graph model
 

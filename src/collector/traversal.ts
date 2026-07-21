@@ -54,7 +54,7 @@ export async function traverse(
   { acli, glab }: TraverseDeps,
   options: TraverseOptions = {}
 ): Promise<TraversalResult> {
-  const { maxDepth = 1, maxNodes = 50, log = () => {} } = options;
+  const { maxDepth = 2, maxNodes = 100, log = () => {} } = options;
 
   if (!isJiraKey(entryKey)) {
     throw new Error(`Invalid entry Jira key: ${entryKey}`);

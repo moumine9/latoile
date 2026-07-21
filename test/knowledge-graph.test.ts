@@ -188,6 +188,28 @@ test('storedContext caps items at maxNodes with the entry always kept', async ()
   assert.equal(keys?.[0], 'PV2-1');
 });
 
+test('storedContext surfaces a traversal block; node_cap_hit flips when maxNodes truncates', async () => {
+  const fresh = new Date().toISOString();
+  const row = (key: string) => ({ issue: { key, resolved: true, last_seen: fresh }, parentKey: null, mergeRequests: [] });
+  const rows = [row('PV2-1'), row('PV2-2'), row('PV2-3')];
+
+  // Cap below the neighborhood size → node_cap_hit true, counts reflect the cut.
+  const capped = (await makeGraph([rows] as never).graph.storedContext('PV2-1', 1, 2)).traversal;
+  assert.ok(capped, 'stored payload must carry a traversal block (parity with live)');
+  assert.equal(capped.node_cap_hit, true);
+  assert.equal(capped.nodes_fetched, 2, 'items capped at maxNodes');
+  assert.equal(capped.total_nodes, 3, 'total reflects the discovered neighborhood');
+  assert.equal(capped.max_nodes, 2);
+  // Depth fields are intentionally omitted on the stored path (can't be computed).
+  assert.equal('depth_reached' in capped, false);
+  assert.equal('depth_limit_hit' in capped, false);
+
+  // Cap above the neighborhood size → not truncated.
+  const full = (await makeGraph([rows] as never).graph.storedContext('PV2-1', 1, 100)).traversal;
+  assert.equal(full?.node_cap_hit, false);
+  assert.equal(full?.nodes_fetched, 3);
+});
+
 test('getContextTool serves fresh stored context without running the pipeline', async () => {
   const fresh = new Date(Date.now() - 30_000).toISOString();
   const { graph } = makeGraph([

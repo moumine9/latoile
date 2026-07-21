@@ -99,6 +99,23 @@ export type StoredTraceabilityLink = {
   merge_request_id: number;
 }
 
+/**
+ * Traversal completeness for a stored payload. The node-count fields mirror the
+ * live path's `ContextTraversalInfo` and are trustworthy. The depth-reached /
+ * depth-limit fields are deliberately OMITTED here: the neighborhood is gathered
+ * with a single variable-length query that cannot report per-node depth nor
+ * whether relationships existed beyond the requested budget, so reporting them
+ * would give a consumer a false "depth complete". `max_depth` is the requested
+ * hop budget (honest as a budget, not a claim about what was reached).
+ */
+export type StoredTraversalInfo = {
+  nodes_fetched: number;
+  total_nodes: number;
+  max_depth: number;
+  max_nodes: number;
+  node_cap_hit: boolean;
+}
+
 export type StoredContextResult = {
   found: boolean;
   entry?: string;
@@ -108,6 +125,8 @@ export type StoredContextResult = {
   traceability?: { links: StoredTraceabilityLink[] };
   /** Age of the STALEST resolved issue — safe to compare against a freshness budget. */
   ageSeconds?: number;
+  /** Traversal completeness of the stored neighborhood (parity with the live path). */
+  traversal?: StoredTraversalInfo;
 }
 
 export type ProjectActivityMatch = {
@@ -239,7 +258,7 @@ export class KnowledgeGraph {
    * issue in the neighborhood, so callers comparing against a freshness
    * budget never serve partially-expired data.
    */
-  async storedContext(entryKey: string, maxDepth = 1, maxNodes = 50): Promise<StoredContextResult> {
+  async storedContext(entryKey: string, maxDepth = 2, maxNodes = 100): Promise<StoredContextResult> {
     const depth = Math.min(Math.max(Math.trunc(maxDepth), 0), 5);
     // Variable-length patterns cannot express zero hops, so depth 0 skips the
     // neighborhood expansion entirely.
@@ -320,6 +339,7 @@ export class KnowledgeGraph {
     }
     if (items.length === 0) return { found: false };
 
+    const nodeCapHit = allRows.length > entryFirst.length;
     return {
       found: true,
       entry: entryKey,
@@ -327,6 +347,13 @@ export class KnowledgeGraph {
       repositories: [...allRepositories].sort(),
       traceability: { links },
       ageSeconds: Number.isFinite(stalest) ? Math.max(0, Math.round((Date.now() - stalest) / 1000)) : undefined,
+      traversal: {
+        nodes_fetched: items.length,
+        total_nodes: allRows.length,
+        max_depth: depth,
+        max_nodes: Math.max(1, maxNodes),
+        node_cap_hit: nodeCapHit,
+      },
     };
   }
 

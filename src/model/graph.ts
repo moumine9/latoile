@@ -250,7 +250,27 @@ export function buildContext(traversal: TraversalResult): ContextResult {
     }
   }
 
-  return { entry: traversal.entry, items, repositories: [...allRepositories].sort(), traceability: { links } };
+  const stats = traversal.stats;
+  let depthReached = 0;
+  for (const issue of issues.values()) {
+    if (issue.resolved && issue.depth > depthReached) depthReached = issue.depth;
+  }
+
+  return {
+    entry: traversal.entry,
+    items,
+    repositories: [...allRepositories].sort(),
+    traceability: { links },
+    traversal: {
+      nodes_fetched: stats.fetched,
+      total_nodes: stats.total,
+      depth_reached: depthReached,
+      max_depth: stats.maxDepth,
+      max_nodes: stats.maxNodes,
+      node_cap_hit: stats.capped,
+      depth_limit_hit: stats.maxDepthReached,
+    },
+  };
 }
 
 export default buildGraph;

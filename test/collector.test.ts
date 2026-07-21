@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { extractJiraKeys, isJiraKey } from '../src/collector/jiraKeys.js';
 import { normalizeIssue, textFromDescription, type RawJiraIssue } from '../src/collector/acli.js';
 import { GlabClient, normalizeMergeRequest, normalizeCommit } from '../src/collector/glab.js';
+import { GitlabHttpClient, type FetchFn } from '../src/collector/gitlab-http.js';
 import { EDGE_SCHEMA } from '../src/model/graph.js';
 import type { RunFn } from '../src/types.js';
 
@@ -182,6 +183,185 @@ test('GlabClient resolves projects from group and caches result', async () => {
   // groupProjectsArgs was called only once (first resolution)
   const groupCalls = calls.filter((a) => a[0] === 'api' && a[1]?.includes('groups/'));
   assert.equal(groupCalls.length, 1);
+});
+
+/* ------------------------- GitlabHttpClient resolution ------------------- */
+
+type FakeProject = { path_with_namespace: string; last_activity_at?: string };
+
+/** Builds a JSON Response, matching what apiGet expects from `fetch`. */
+function jsonResponse(projects: FakeProject[]): Response {
+  return new Response(JSON.stringify(projects), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+test('GitlabHttpClient caches a complete group resolution', async () => {
+  const paths: string[] = [];
+  const fetchImpl: FetchFn = async (url) => {
+    paths.push(url);
+    return jsonResponse([{ path_with_namespace: 'grp/alpha' }, { path_with_namespace: 'grp/beta' }]);
+  };
+  const client = new GitlabHttpClient({ token: 't', groups: ['grp'], fetch: fetchImpl });
+  const first = await client.resolveProjects();
+  const second = await client.resolveProjects(); // cached — no more fetches
+  assert.deepEqual(first, ['grp/alpha', 'grp/beta']);
+  assert.equal(client.lastResolutionDegraded, false);
+  assert.deepEqual(second, first);
+  assert.equal(paths.length, 1, 'expected the second resolveProjects to hit the cache');
+});
+
+test('GitlabHttpClient does not cache a degraded resolution and retries next call', async () => {
+  let alphaFails = true; // group A fails (both attempts) on the first resolution
+  const fetchImpl: FetchFn = async (url) => {
+    if (url.includes('groups/A')) {
+      if (alphaFails) throw new Error('Request timed out');
+      return jsonResponse([{ path_with_namespace: 'A/one' }]);
+    }
+    return jsonResponse([{ path_with_namespace: 'B/two' }]);
+  };
+  const client = new GitlabHttpClient({ token: 't', groups: ['A', 'B'], fetch: fetchImpl });
+
+  const first = await client.resolveProjects();
+  assert.equal(client.lastResolutionDegraded, true, 'a failed group scan must mark resolution degraded');
+  assert.deepEqual(first, ['B/two'], 'best-effort list for this call');
+  assert.equal(client._cachedProjects === null, true, 'a degraded resolution must not be cached');
+
+  // Group A recovers; the next call re-resolves instead of reusing the poisoned set.
+  alphaFails = false;
+  const second = await client.resolveProjects();
+  assert.equal(client.lastResolutionDegraded, false);
+  assert.deepEqual(second.slice().sort(), ['A/one', 'B/two']);
+  const cached = client._cachedProjects;
+  assert.ok(cached, 'a complete resolution must be cached');
+  assert.deepEqual(cached.slice().sort(), ['A/one', 'B/two']);
+});
+
+test('GitlabHttpClient retry recovers a single transient page failure', async () => {
+  let attempts = 0;
+  const fetchImpl: FetchFn = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('Request timed out'); // first attempt fails, retry succeeds
+    return jsonResponse([{ path_with_namespace: 'grp/alpha' }]);
+  };
+  const client = new GitlabHttpClient({ token: 't', groups: ['grp'], fetch: fetchImpl });
+  const projects = await client.resolveProjects();
+  assert.deepEqual(projects, ['grp/alpha']);
+  assert.equal(client.lastResolutionDegraded, false, 'a retried-then-recovered scan is complete');
+  assert.deepEqual(client._cachedProjects, ['grp/alpha'], 'a complete scan is cached');
+  assert.equal(attempts, 2, 'expected exactly one retry');
+});
+
+test('GitlabHttpClient does not cache a page-1-only list when page 2 fails', async () => {
+  // Page 1 returns a full page (100) forcing a page-2 fetch, which fails both attempts.
+  const fullPage: FakeProject[] = Array.from({ length: 100 }, (_v, i) => ({
+    path_with_namespace: `grp/p${i}`,
+  }));
+  const fetchImpl: FetchFn = async (url) => {
+    // Note: `per_page=100` also contains "page=1", so match the page cursor precisely.
+    if (url.includes('&page=2')) throw new Error('Request timed out'); // page 2 (and its retry) fail
+    return jsonResponse(fullPage);
+  };
+  const client = new GitlabHttpClient({ token: 't', groups: ['grp'], fetch: fetchImpl });
+  const projects = await client.resolveProjects();
+  assert.equal(projects.length, 100, 'page-1 results are returned best-effort');
+  assert.equal(client.lastResolutionDegraded, true, 'an incomplete paginated scan is degraded');
+  assert.equal(client._cachedProjects === null, true, 'a partial page-1-only list must not be cached as complete');
+});
+
+test('GitlabHttpClient.apiGet retries on 429 and honors Retry-After', async () => {
+  const waits: number[] = [];
+  let calls = 0;
+  const fetchImpl: FetchFn = async () => {
+    calls += 1;
+    if (calls <= 2) {
+      return new Response('slow down', {
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: { 'retry-after': '2' },
+      });
+    }
+    return jsonResponse([{ path_with_namespace: 'g/p' }]);
+  };
+  const client = new GitlabHttpClient({
+    token: 't',
+    fetch: fetchImpl,
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  const result = await client.apiGet<FakeProject[]>('projects/x/merge_requests');
+  assert.deepEqual(result, [{ path_with_namespace: 'g/p' }]);
+  assert.equal(calls, 3, 'two 429s then success');
+  assert.deepEqual(waits, [2000, 2000], 'waited the Retry-After interval before each retry');
+});
+
+test('GitlabHttpClient.apiGet gives up after maxRetries on sustained 429', async () => {
+  let calls = 0;
+  const fetchImpl: FetchFn = async () => {
+    calls += 1;
+    return new Response('slow', { status: 429, statusText: 'Too Many Requests' });
+  };
+  const client = new GitlabHttpClient({
+    token: 't',
+    maxRetries: 2,
+    fetch: fetchImpl,
+    sleep: async () => {
+      /* immediate in tests */
+    },
+  });
+  await assert.rejects(() => client.apiGet('projects/x'), /GitLab API 429/);
+  assert.equal(calls, 3, 'initial attempt + 2 retries');
+});
+
+test('rateLimitWaitMs prefers Retry-After, falls back to exponential backoff, and caps', () => {
+  const client = new GitlabHttpClient({
+    token: 't',
+    maxBackoffMs: 5000,
+    fetch: async () => new Response(''),
+  });
+  assert.equal(client.rateLimitWaitMs(new Response('', { status: 429, headers: { 'retry-after': '3' } }), 0), 3000);
+  assert.equal(
+    client.rateLimitWaitMs(new Response('', { status: 429, headers: { 'retry-after': '999' } }), 0),
+    5000,
+    'capped at maxBackoffMs'
+  );
+  const noHeader = new Response('', { status: 429 });
+  assert.equal(client.rateLimitWaitMs(noHeader, 0), 1000, 'backoff 1000 * 2^0');
+  assert.equal(client.rateLimitWaitMs(noHeader, 2), 4000, 'backoff 1000 * 2^2');
+});
+
+test('apiGetWithRetry retries a non-429 error even when its body contains "429"', async () => {
+  let calls = 0;
+  const fetchImpl: FetchFn = async () => {
+    calls += 1;
+    // A 500 whose body incidentally contains "429" must NOT be read as a rate limit.
+    if (calls === 1) return new Response('request id: 429abc', { status: 500, statusText: 'Server Error' });
+    return jsonResponse([{ path_with_namespace: 'g/p' }]);
+  };
+  const client = new GitlabHttpClient({ token: 't', fetch: fetchImpl });
+  const result = await client.apiGetWithRetry<FakeProject[]>('groups/x/projects');
+  assert.deepEqual(result, [{ path_with_namespace: 'g/p' }]);
+  assert.equal(calls, 2, 'the transient 500 must still be retried, not misclassified as 429');
+});
+
+test('apiGetWithRetry does not re-attempt a genuine exhausted 429', async () => {
+  let calls = 0;
+  const fetchImpl: FetchFn = async () => {
+    calls += 1;
+    return new Response('slow', { status: 429, statusText: 'Too Many Requests' });
+  };
+  const client = new GitlabHttpClient({
+    token: 't',
+    maxRetries: 0,
+    fetch: fetchImpl,
+    sleep: async () => {
+      /* immediate in tests */
+    },
+  });
+  await assert.rejects(() => client.apiGetWithRetry('groups/x/projects'), /GitLab API 429/);
+  assert.equal(calls, 1, 'a real 429 is not retried again by apiGetWithRetry');
 });
 
 test('EDGE_SCHEMA covers all expected edge types', () => {

@@ -118,6 +118,7 @@ export function createClients(
     activeDays: config.gitlabActiveDays,
     concurrency: config.gitlabConcurrency,
     fetchChangedFiles: config.gitlabFetchChangedFiles,
+    maxRetries: config.gitlabMaxRetries,
     log,
   });
 

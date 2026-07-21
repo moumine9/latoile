@@ -71,6 +71,7 @@ export async function getContextTool(
           items: stored.items,
           repositories: stored.repositories,
           traceability: stored.traceability,
+          traversal: stored.traversal,
           ageSeconds: stored.ageSeconds,
           source: 'knowledge_graph',
         });

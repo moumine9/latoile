@@ -78,6 +78,21 @@ type RawDiff = {
 /** Injectable fetch function — matches the global `fetch` signature. */
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Error thrown by `apiGet` carrying the HTTP status, so callers can branch on
+ * the real status code (e.g. 429 vs. 403) instead of substring-matching the
+ * message — the message embeds the request path and response body, which can
+ * incidentally contain those digits.
+ */
+export class GitlabApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'GitlabApiError';
+    this.status = status;
+  }
+}
+
 export type GitlabHttpClientDeps = {
   /** GitLab PAT. Defaults to reading from glab config / LATOILE_GITLAB_TOKEN. */
   token?: string;
@@ -96,6 +111,12 @@ export type GitlabHttpClientDeps = {
    * Off by default — volume scales with MR count per traversal.
    */
   fetchChangedFiles?: boolean;
+  /** Max retries on an HTTP 429 before giving up on a single request (default 4). */
+  maxRetries?: number;
+  /** Cap on any single rate-limit backoff wait, in ms (default 60_000). */
+  maxBackoffMs?: number;
+  /** Sleep implementation — injectable so tests don't actually wait. */
+  sleep?: (ms: number) => Promise<void>;
   /** Fetch implementation — injectable for tests. */
   fetch?: FetchFn;
   log?: LogFn;
@@ -118,9 +139,18 @@ export class GitlabHttpClient {
   activeDays: number;
   concurrency: number;
   fetchChangedFiles: boolean;
+  maxRetries: number;
+  maxBackoffMs: number;
+  sleep: (ms: number) => Promise<void>;
   fetch: FetchFn;
   log: LogFn;
   _cachedProjects: string[] | null;
+  /**
+   * Set when the most recent project resolution could not scan every configured
+   * group completely (API error / timeout). A degraded resolution is never
+   * cached, so callers can distinguish "no MRs found" from "search was partial".
+   */
+  lastResolutionDegraded: boolean;
 
   constructor({
     token,
@@ -130,6 +160,9 @@ export class GitlabHttpClient {
     activeDays = 90,
     concurrency = 20,
     fetchChangedFiles = false,
+    maxRetries = 4,
+    maxBackoffMs = 60_000,
+    sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
     fetch: fetchImpl = globalThis.fetch,
     log = () => {},
   }: GitlabHttpClientDeps) {
@@ -140,22 +173,71 @@ export class GitlabHttpClient {
     this.activeDays = activeDays > 0 ? activeDays : 90;
     this.concurrency = concurrency > 0 ? concurrency : 20;
     this.fetchChangedFiles = fetchChangedFiles;
+    this.maxRetries = maxRetries >= 0 ? maxRetries : 4;
+    this.maxBackoffMs = maxBackoffMs > 0 ? maxBackoffMs : 60_000;
+    this.sleep = sleep;
     this.fetch = fetchImpl;
     this.log = log;
     this._cachedProjects = null;
+    this.lastResolutionDegraded = false;
   }
 
-  /** Makes an authenticated GET request and returns the parsed JSON body. */
+  /**
+   * Makes an authenticated GET request and returns the parsed JSON body.
+   *
+   * On HTTP 429 (rate limited) the request is retried up to `maxRetries` times,
+   * waiting the server-directed interval (`Retry-After` seconds, or the
+   * `RateLimit-Reset` epoch) when present and otherwise an exponential backoff,
+   * always capped at `maxBackoffMs`. Because every project/commit/group request
+   * funnels through here, this single choke point protects the whole fan-out.
+   */
   async apiGet<T>(path: string): Promise<T> {
     const url = `${this.baseUrl}/${path}`;
-    const resp = await this.fetch(url, {
-      headers: { Authorization: `Bearer ${this.token}` },
-    });
-    if (!resp.ok) {
+    for (let attempt = 0; ; attempt += 1) {
+      const resp = await this.fetch(url, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (resp.ok) return resp.json() as Promise<T>;
+
+      if (resp.status === 429 && attempt < this.maxRetries) {
+        const waitMs = this.rateLimitWaitMs(resp, attempt);
+        // Discard the unread body so the connection is released before the next
+        // attempt; otherwise abandoned response streams accumulate across the
+        // large issues×projects fan-out and can exhaust sockets.
+        await resp.body?.cancel().catch(() => {});
+        this.log(
+          `gitlab: 429 rate limited on ${path}; waiting ${Math.round(waitMs / 1000)}s ` +
+            `(retry ${attempt + 1}/${this.maxRetries})`
+        );
+        await this.sleep(waitMs);
+        continue;
+      }
+
       const body = await resp.text().catch(() => '');
-      throw new Error(`GitLab API ${resp.status} ${resp.statusText} — ${path}${body ? `: ${body.slice(0, 200)}` : ''}`);
+      throw new GitlabApiError(
+        resp.status,
+        `GitLab API ${resp.status} ${resp.statusText} — ${path}${body ? `: ${body.slice(0, 200)}` : ''}`
+      );
     }
-    return resp.json() as Promise<T>;
+  }
+
+  /**
+   * Computes how long to wait after a 429, preferring the server's own signal:
+   * `Retry-After` (seconds) or `RateLimit-Reset` (Unix epoch seconds). Falls
+   * back to exponential backoff (1s, 2s, 4s, …). The result is clamped to
+   * `maxBackoffMs` so a misreported header can never stall the pipeline.
+   */
+  rateLimitWaitMs(resp: Response, attempt: number): number {
+    const retryAfter = Number(resp.headers.get('retry-after'));
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      return Math.min(retryAfter * 1000, this.maxBackoffMs);
+    }
+    const reset = Number(resp.headers.get('ratelimit-reset'));
+    if (Number.isFinite(reset) && reset > 0) {
+      const deltaMs = reset * 1000 - Date.now();
+      if (deltaMs > 0) return Math.min(deltaMs, this.maxBackoffMs);
+    }
+    return Math.min(1000 * 2 ** attempt, this.maxBackoffMs);
   }
 
   /**
@@ -163,8 +245,13 @@ export class GitlabHttpClient {
    * those with activity within `this.activeDays`. Sorted by recency so early
    * pages are the most relevant. Pagination stops as soon as all items on a
    * page are older than the cutoff.
+   *
+   * Returns the resolved projects plus a `complete` flag: `false` means a page
+   * failed even after retry, so the list is partial and must not be treated as
+   * authoritative (see `resolveProjects`). These group endpoints time out
+   * intermittently on gitlab.com, so each page is retried once.
    */
-  async fetchGroupProjects(group: string): Promise<string[]> {
+  async fetchGroupProjects(group: string): Promise<{ projects: string[]; complete: boolean }> {
     const cutoffMs = Date.now() - this.activeDays * 24 * 60 * 60 * 1000;
     const results: string[] = [];
     let page = 1;
@@ -178,11 +265,12 @@ export class GitlabHttpClient {
 
       let data: RawProject[];
       try {
-        data = await this.apiGet<RawProject[]>(path);
+        data = await this.apiGetWithRetry<RawProject[]>(path);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.log(`gitlab: group project list failed for ${group}: ${msg}`);
-        break;
+        this.log(`gitlab: group project list failed for ${group} (page ${page}): ${msg}`);
+        // Partial list: signal incompleteness so the caller doesn't cache it.
+        return { projects: results, complete: false };
       }
 
       if (data.length === 0) break;
@@ -203,26 +291,74 @@ export class GitlabHttpClient {
       page++;
     }
 
-    return results;
+    return { projects: results, complete: true };
   }
 
-  /** Resolves the project list from `projects` or `groups` (cached). */
+  /**
+   * `apiGet` with a single extra retry for transient *timeout* errors. The
+   * group-projects and group-MR endpoints on gitlab.com return sporadic
+   * timeouts; one re-attempt turns most of those into a success instead of
+   * poisoning the resolved project set. Rate-limit (429) errors are NOT retried
+   * here — `apiGet` already backs off and exhausts its own 429 budget, so a
+   * second immediate attempt would only add pressure.
+   */
+  async apiGetWithRetry<T>(path: string): Promise<T> {
+    try {
+      return await this.apiGet<T>(path);
+    } catch (err) {
+      // Don't re-attempt a rate-limit: apiGet already exhausted its 429 budget.
+      // Branch on the real status, never the message text (which embeds the
+      // path/body and could contain "429" for unrelated errors).
+      if (err instanceof GitlabApiError && err.status === 429) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log(`gitlab: retrying ${path} after error: ${msg}`);
+      return this.apiGet<T>(path);
+    }
+  }
+
+  /**
+   * Resolves the project list from `projects` or `groups`. A successful,
+   * complete scan is cached for the client lifetime. A degraded scan (any group
+   * failed to enumerate fully) is returned best-effort for this call but is
+   * NOT cached, so the next `fetchForKey` retries resolution instead of reusing
+   * a poisoned/partial set. `lastResolutionDegraded` records the outcome.
+   */
   async resolveProjects(): Promise<string[]> {
-    if (this.projects.length > 0) return this.projects;
-    if (this._cachedProjects !== null) return this._cachedProjects;
+    if (this.projects.length > 0) {
+      this.lastResolutionDegraded = false;
+      return this.projects;
+    }
+    if (this._cachedProjects !== null) {
+      this.lastResolutionDegraded = false;
+      return this._cachedProjects;
+    }
     if (this.groups.length === 0) {
       this._cachedProjects = [];
+      this.lastResolutionDegraded = false;
       return [];
     }
 
     const all: string[] = [];
+    let complete = true;
     for (const group of this.groups) {
-      const ps = await this.fetchGroupProjects(group);
-      all.push(...ps);
+      const { projects, complete: groupComplete } = await this.fetchGroupProjects(group);
+      all.push(...projects);
+      if (!groupComplete) complete = false;
     }
-    this._cachedProjects = [...new Set(all)];
-    this.log(`gitlab: ${this._cachedProjects.length} active projects resolved from ${this.groups.join(', ')}`);
-    return this._cachedProjects;
+    const resolved = [...new Set(all)];
+    this.lastResolutionDegraded = !complete;
+
+    if (!complete) {
+      this.log(
+        `gitlab: project resolution incomplete (${resolved.length} projects from ${this.groups.join(', ')}) ` +
+          `— MR results may be partial; not caching so the next lookup retries`
+      );
+      return resolved;
+    }
+
+    this._cachedProjects = resolved;
+    this.log(`gitlab: ${resolved.length} active projects resolved from ${this.groups.join(', ')}`);
+    return resolved;
   }
 
   /** Searches MRs for a Jira key within a single project, then fetches commits. */
