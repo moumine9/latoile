@@ -58,6 +58,31 @@ then ask Orbit `run_sql`/`get_graph_schema` code-structure questions about those
 If the combination measurably shortens "understand the existing code for this ticket,"
 Phase 1 is justified. If not, stop here — Phase 0 alone is already useful.
 
+### Phase 0 — done (2026-07-21)
+
+- Installed Orbit Local **v0.91.0** to `C:\Users\amoumine\AppData\Local\Programs\orbit\orbit.exe`
+  (user PATH updated — needs a fresh terminal to resolve `orbit`).
+- Indexed the **`prescription` monorepo** — 5,670 files, 123,891 definitions, 278,012
+  relationships in ~13s. Graph at `~/.orbit/graph.duckdb`.
+- Registered both servers in project `.mcp.json` (`latoile` via `node dist/src/mcp/server.js`,
+  `orbit-local` via `orbit mcp serve` exposing `run_sql` / `get_graph_schema` / `index`).
+- Validated the value: a single `run_sql` for `%QuickBatchRenew%` returned the whole feature
+  across repos — frontend `useQuickBatchRenew` (`hooks/useQuickBatchRenew.tsx:86`, the exact
+  file `PLAN_IMPROVMENTS.md` flagged as invisible to latoile) plus backend `QuickBatchRenewal`
+  class/request/tests and the frontend actions. This is the source-content layer latoile lacks.
+
+**Gotchas discovered (feed into Phase 1):**
+- `orbit index` needs a **git repo root** and silently no-ops (exit 0, empty output) on a
+  non-repo dir. `prescription/backend` and `prescription/frontend` are **not** repo roots — the
+  git root is the `prescription` monorepo. Index the repo root, not the sub-app.
+- The DuckDB graph is **single-writer**: running `orbit index` concurrently with another
+  `orbit` read (e.g. `schema`) silently drops the write. Serialize indexing.
+- Auto-generated files blow the per-file CPU budget (77 EF Core `*.Designer.cs` migrations
+  skipped, 0 errored) — expected and harmless; they aren't useful code anyway.
+- Verified schema for Phase 1's join: `gl_file.path` ↔ `gl_definition.file_path`
+  (`name`, `fqn`, `definition_type`, `start_line`/`end_line`); `gl_edge`
+  (`source_id`/`source_kind`, `relationship_kind`, `target_id`/`target_kind`) for references.
+
 ## Phase 1 — latoile emits a "code neighborhood" per issue (optional, if Phase 0 proves out)
 
 Close latoile's source-content blind spot by joining what we already know (MR **changed

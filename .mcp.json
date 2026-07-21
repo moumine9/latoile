@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "latoile": {
+      "command": "node",
+      "args": ["dist/src/mcp/server.js"]
+    },
+    "orbit-local": {
+      "command": "orbit",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
