@@ -93,6 +93,19 @@ export type Config = {
   watcherStaleMinutes: number;
   /** Max issues the watcher re-traverses per run. */
   watcherBatchSize: number;
+  /**
+   * Opt-in: enrich the context payload with a "code neighborhood" from a local
+   * GitLab Orbit graph (definitions in the files each issue's MRs touched). Off
+   * by default; needs Orbit Local installed and repos indexed, and only adds
+   * data when `gitlabFetchChangedFiles` is also on. See PLAN-ORBIT.md.
+   */
+  orbitEnabled: boolean;
+  /** Orbit CLI binary. */
+  orbitBin: string;
+  /** Override the Orbit DuckDB path (default: the CLI's own ~/.orbit/graph.duckdb). */
+  orbitDbPath: string;
+  /** Max definitions returned per touched repo in the code neighborhood. */
+  orbitMaxDefinitions: number;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -146,6 +159,10 @@ export const config: Config = {
   neo4jEnabled: process.env['LATOILE_NEO4J'] !== 'off',
   watcherStaleMinutes: intFromEnv('LATOILE_WATCHER_STALE_MIN', 1440),
   watcherBatchSize: intFromEnv('LATOILE_WATCHER_BATCH', 20),
+  orbitEnabled: process.env['LATOILE_ORBIT'] === '1',
+  orbitBin: process.env['LATOILE_ORBIT_BIN'] || 'orbit',
+  orbitDbPath: process.env['LATOILE_ORBIT_DB'] || '',
+  orbitMaxDefinitions: intFromEnv('LATOILE_ORBIT_MAX_DEFS', 40),
 };
 
 export default config;

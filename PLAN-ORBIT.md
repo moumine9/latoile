@@ -145,6 +145,46 @@ This is the most strategically interesting option and the biggest bet:
   `GitlabSource` implementation backed by Orbit Remote behind a flag, keeping the current
   HTTP client as fallback.
 
+## Phase 1 — done (2026-07-22)
+
+Implemented as an opt-in, additive enrichment:
+
+- `src/collector/orbit.ts` — `OrbitClient` shells out to `orbit sql -F json` (process-spawn,
+  no DuckDB native dep). `resolveRepo(name)` matches a GitLab repo path's last segment,
+  lowercased, against `_orbit_manifest` (cached, including negative results — repos aren't
+  re-checked every issue). `definitionsForFiles(projectId, files, cap)` queries
+  `gl_definition` for an MR's changed files. `project_id` is kept as a **string** end-to-end
+  — Orbit's ids exceed `Number.MAX_SAFE_INTEGER` (e.g. `1218550793252928037`), so it's cast
+  to `VARCHAR` in SQL and never parsed as a JS number.
+- `codeNeighborhoodsForIssue` groups an issue's MR `changedFiles` by repo and produces one
+  `ContextCodeNeighborhood` per repo — critically **branch-aware**: it carries the *indexed*
+  `branch`/`commit_sha` (not the MR's branch) and distinguishes three states: repo
+  not-indexed (`indexed: false`), indexed but the changed files don't resolve on that branch
+  (`files_matched: 0` — the branch-drift tell), and matched (definitions present). This
+  replaced an earlier design that only signaled indexed/not-indexed and would have silently
+  presented branch-drifted code as authoritative — caught by an advisor review before coding.
+- Wired into `buildContextGraph` (`src/pipeline.ts`) as a fire-safe step after `buildContext`;
+  a code-enrichment failure never fails the run. New `ContextItem.code?` field
+  (`src/types.ts`), populated only when `LATOILE_ORBIT=1` and the issue has MR
+  `changedFiles` (i.e. `LATOILE_GITLAB_FETCH_FILES=1` is also on).
+- New config: `LATOILE_ORBIT` (off by default), `LATOILE_ORBIT_BIN` (default `orbit`),
+  `LATOILE_ORBIT_DB` (override DuckDB path), `LATOILE_ORBIT_MAX_DEFS` (default 40).
+- 7 unit tests (`test/orbit.test.ts`): repo-name derivation, manifest parsing incl. the
+  BIGINT-as-string handling, negative-result caching, definition capping, SQL quote-escaping
+  and a non-numeric-project-id guard, and the three-state neighborhood behavior.
+
+**Verified live** against PV2-17843/PV2-17313/PV2-18006/PV2-9050: real definitions resolved
+across `Prescription`, `portal`, and `notification-manager` with correct file/line info,
+e.g. `QuickBatchRenewal.cs:18`, `IPortalNotificationClient.cs:8`,
+`PortalNotificationClient.cs:13` — the exact code `PLAN_IMPROVMENTS.md` Point 1 flagged as
+invisible to latoile is now surfaced, per-issue, across repos.
+
+**Known limitation to watch:** `files_matched` was well below `files_changed` on some repos
+in the live run (e.g. portal 2/4, notification-manager 1/2 or 3/4) — expected given branch
+drift (each repo is indexed at whatever branch was checked out, not the MR's branch), but
+worth periodically re-running `scripts/orbit-reindex.ps1 -Clean` against current `develop2`/
+`main` to keep the match rate meaningful.
+
 ## Risks / non-goals
 
 - **Beta.** Orbit is GitLab 19.1 beta; CLI, schema (`gl_*` tables), and MCP tool names may

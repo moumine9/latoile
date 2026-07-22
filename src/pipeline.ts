@@ -8,6 +8,12 @@ import { buildGraph, buildContext } from './model/graph.js';
 import { config as defaultConfig, type Config } from './config.js';
 import { SqliteCacheStore, type CacheStore } from './cache/store.js';
 import { CachedIssueSource, CachedGitlabSource } from './cache/cached-clients.js';
+import {
+  OrbitClient,
+  codeNeighborhoodsForIssue,
+  type IssueForCode,
+  type OrbitSource,
+} from './collector/orbit.js';
 import type { GraphSink } from './sink/graph-sink.js';
 import type { KnowledgeGraph } from './sink/knowledge-graph.js';
 import {
@@ -43,6 +49,11 @@ export type BuildContextGraphOptions = {
   maxAgeSeconds?: number;
   /** Read handle for partial refresh; supplied by the MCP layer or tests. */
   knowledgeGraph?: KnowledgeGraph;
+  /**
+   * Orbit code-enrichment source override. `undefined` = build from config;
+   * `null` = disable for this run; an object = use it (tests inject a stub).
+   */
+  orbit?: OrbitSource | null;
 }
 
 // One knowledge-graph sink per process, created lazily on first use so the
@@ -198,11 +209,71 @@ export async function buildContextGraph(
   }
 
   log(`Building graph visualization and context payloads...`);
+  const context = buildContext(traversal);
+
+  // Opt-in: attach a per-issue "code neighborhood" from a local Orbit graph.
+  // Fire-safe — a code-enrichment failure never fails the run.
+  const orbit = resolveOrbit(config, options, log);
+  if (orbit) {
+    try {
+      await enrichContextWithCode(context, traversal, orbit, config.orbitMaxDefinitions);
+    } catch (err) {
+      log(`Orbit code enrichment failed (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
   return {
     graph: buildGraph(traversal, config.jiraBaseUrl),
-    context: buildContext(traversal),
+    context,
     graphServedIssues: tally.issues,
   };
+}
+
+/**
+ * Resolves the Orbit source for a run: an injected stub, `null` to disable, or a
+ * config-built `OrbitClient` when `orbitEnabled`. Returns `undefined` when Orbit
+ * enrichment should be skipped.
+ */
+function resolveOrbit(config: Config, options: BuildContextGraphOptions, log: LogFn): OrbitSource | undefined {
+  if (options.orbit === null) return undefined;
+  if (options.orbit) return options.orbit;
+  if (!config.orbitEnabled) return undefined;
+  const run = createRunner({
+    delayMs: 0,
+    retries: config.cliRetries,
+    timeoutMs: config.cliTimeoutMs,
+    log,
+  });
+  return new OrbitClient({ run, bin: config.orbitBin, dbPath: config.orbitDbPath, log });
+}
+
+/**
+ * Attaches `code` neighborhoods to each context item, correlating the traversal
+ * issue's MR changed files to definitions in the local Orbit graph. Issues with
+ * no changed files (or repos not indexed) are handled inside
+ * `codeNeighborhoodsForIssue`.
+ */
+async function enrichContextWithCode(
+  context: ContextResult,
+  traversal: TraversalResult,
+  orbit: OrbitSource,
+  maxDefinitions: number
+): Promise<void> {
+  for (const item of context.items) {
+    const key = item.work_item.id;
+    if (!key) continue;
+    const node = traversal.issues.get(key);
+    if (!node) continue;
+    const issue: IssueForCode = {
+      key,
+      mergeRequests: (node.gitlab?.mergeRequests ?? []).map((mr) => ({
+        project: mr.project,
+        changedFiles: mr.changedFiles,
+      })),
+    };
+    const code = await codeNeighborhoodsForIssue(issue, orbit, maxDefinitions);
+    if (code) item.code = code;
+  }
 }
 
 /** ContextGraph plus how the MR entry point was resolved to a Jira key. */

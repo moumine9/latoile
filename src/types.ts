@@ -282,6 +282,44 @@ export type ContextComment = {
   body: string;
 }
 
+/** A single code definition surfaced from a local GitLab Orbit graph. */
+export type ContextCodeDefinition = {
+  name: string;
+  /** Orbit's definition_type, e.g. Class | Function | Interface | Module. */
+  kind: string;
+  /** Repo-relative path (matches the MR's changed-file paths). */
+  file: string;
+  start_line: number | undefined;
+}
+
+/**
+ * The "code neighborhood" for one repository an issue touched: definitions that
+ * live in the files the issue's MRs changed, read from a local Orbit graph.
+ *
+ * IMPORTANT — this is a *navigation aid, not a record of the change*. Orbit
+ * indexes whatever branch was checked out locally (`branch`/`commit_sha`), which
+ * is almost never the MR's branch, so these are the definitions **as they stand
+ * on the indexed branch**. Three states are distinguished:
+ *   - `indexed: false`            → repo isn't in the local Orbit graph at all
+ *   - `indexed: true`, `files_matched === 0` → changed files aren't present on the
+ *      indexed branch (branch drift / renamed / deleted) — treat with suspicion
+ *   - `indexed: true`, definitions present → best-effort match on the indexed branch
+ */
+export type ContextCodeNeighborhood = {
+  /** GitLab project path this neighborhood is for (mirrors `repositories`). */
+  repository: string;
+  /** Whether the repo was found in the local Orbit graph. */
+  indexed: boolean;
+  /** Locally indexed branch — NOT the MR branch. Present when `indexed`. */
+  branch: string | undefined;
+  commit_sha: string | undefined;
+  /** Changed files considered for this repo. */
+  files_changed: number;
+  /** Of those, how many had at least one definition on the indexed branch. */
+  files_matched: number;
+  definitions: ContextCodeDefinition[];
+}
+
 export type ContextItem = {
   work_item: ContextWorkItem;
   gitlab: ContextGitlab | undefined;
@@ -298,6 +336,12 @@ export type ContextItem = {
    * behavior decisions that never make it into the description.
    */
   comments: ContextComment[];
+  /**
+   * Optional code neighborhood per touched repo, from a local Orbit graph.
+   * Present only when `LATOILE_ORBIT=1` (and MR changed files are available).
+   * Read the caveats on `ContextCodeNeighborhood` — indexed-branch, not MR-branch.
+   */
+  code?: ContextCodeNeighborhood[];
 }
 
 export type TraceabilityLink = {

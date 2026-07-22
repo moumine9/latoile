@@ -97,6 +97,10 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `LATOILE_GITLAB_ACTIVE_DAYS` | `90` | Skip group projects with no activity in this many days |
 | `LATOILE_GITLAB_CONCURRENCY` | `8` | Max parallel GitLab API requests — lower it if you hit 429s |
 | `LATOILE_GITLAB_MAX_RETRIES` | `4` | Retries on an HTTP 429, honoring `Retry-After`/`RateLimit-Reset` with capped backoff |
+| `LATOILE_ORBIT` | _(off)_ | Set to `1` to attach a per-issue code neighborhood from a local [GitLab Orbit](https://docs.gitlab.com/orbit/) graph (see PLAN-ORBIT.md); needs `LATOILE_GITLAB_FETCH_FILES=1` too |
+| `LATOILE_ORBIT_BIN` | `orbit` | Orbit CLI binary |
+| `LATOILE_ORBIT_DB` | _(default)_ | Override the Orbit DuckDB path (default: `~/.orbit/graph.duckdb`) |
+| `LATOILE_ORBIT_MAX_DEFS` | `40` | Max definitions returned per touched repo |
 | `LATOILE_GITLAB_TOKEN` | _(empty)_ | Override the token normally read from glab's config |
 | `LATOILE_GITLAB_FETCH_FILES` | _(off)_ | Set to `1` to fetch each MR's changed file paths (persisted as `:File`/`TOUCHES` in the knowledge graph); one extra API call per MR |
 | `LATOILE_JIRA_URL` | _(empty)_ | e.g. `https://your-org.atlassian.net`; enables the direct Jira HTTP client |
