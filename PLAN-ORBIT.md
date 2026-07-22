@@ -71,6 +71,25 @@ Phase 1 is justified. If not, stop here — Phase 0 alone is already useful.
   file `PLAN_IMPROVMENTS.md` flagged as invisible to latoile) plus backend `QuickBatchRenewal`
   class/request/tests and the frontend actions. This is the source-content layer latoile lacks.
 
+### Multi-repo handling (2026-07-21)
+
+Work items span many repos, so the whole local repo set is indexed into the one shared
+graph (`~/.orbit/graph.duckdb`), each scoped by `(repo_path, branch, commit_sha)` — cross-repo
+"where does symbol X live across services" queries then work in one SQL.
+
+- **Canonical tree: `D:\repos`.** The machine has a near-duplicate mirror under `C:\repos`;
+  only `D:\repos` is indexed. Indexing both would double-count shared repos (Orbit's
+  `project_id` is a synthetic hash, not GitLab's id, so duplicates aren't deduped).
+- **`scripts/orbit-reindex.ps1`** bulk-indexes every git repo under a root **sequentially**
+  (the graph is single-writer). `-Clean` wipes the graph first for a from-scratch rebuild —
+  use it to refresh and drop stale branch entries rather than let them accumulate.
+- Current state: 26 repos under `D:\repos` (+ `D:\latoile`) = **~31k files, ~357k definitions,
+  ~807k relationships**, indexed in ~35s. Refresh with
+  `pwsh -File scripts/orbit-reindex.ps1 -Root D:\repos -Clean` after pulling.
+- **Correlation key for Phase 1:** because `project_id` is synthetic, join latoile's GitLab
+  `repositories` (e.g. `familiprix/priorx/Prescription`) to Orbit by the **last path segment,
+  lowercased** (`prescription`), matched against `_orbit_manifest.repo_path` / `gl_file.path`.
+
 **Gotchas discovered (feed into Phase 1):**
 - `orbit index` needs a **git repo root** and silently no-ops (exit 0, empty output) on a
   non-repo dir. `prescription/backend` and `prescription/frontend` are **not** repo roots — the
