@@ -241,3 +241,39 @@ export function projectActivityTool(
 export function graphStatsTool(graph?: KnowledgeGraph): Promise<ToolResult> {
   return withKnowledgeGraph(async (kg) => kg.stats(), graph);
 }
+
+/* ----------------------------- record_insight ------------------------------ */
+
+export type RecordInsightArgs = {
+  jiraKey: string;
+  rootCause?: string;
+  ruledOut?: string[];
+  entities?: { name: string; role?: string }[];
+  relevantComments?: { commentId: string; relevance: 'high' | 'low'; why?: string }[];
+}
+
+export function recordInsightTool(args: RecordInsightArgs, graph?: KnowledgeGraph): Promise<ToolResult> {
+  const key = args.jiraKey.trim().toUpperCase();
+  if (!isJiraKey(key)) {
+    return Promise.resolve(errorResult(`"${args.jiraKey}" is not a valid Jira key (expected e.g. PV2-17830).`));
+  }
+  if (!args.rootCause && !args.ruledOut?.length && !args.entities?.length && !args.relevantComments?.length) {
+    return Promise.resolve(errorResult('Provide at least one of: rootCause, ruledOut, entities, relevantComments.'));
+  }
+  return withKnowledgeGraph(async (kg) => {
+    const result = await kg.recordInsight({
+      issueKey: key,
+      rootCause: args.rootCause,
+      ruledOut: args.ruledOut,
+      entities: args.entities,
+      relevantComments: args.relevantComments,
+    });
+    if (!result.found) {
+      return {
+        found: false,
+        message: `${key} is not yet in the knowledge graph — run get_context on it first so there's an issue node to attach the insight to.`,
+      };
+    }
+    return { found: true, id: result.id, recorded_at: result.recorded_at };
+  }, graph);
+}

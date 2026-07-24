@@ -7,6 +7,7 @@ import {
   graphStatsTool,
   knownContextTool,
   personActivityTool,
+  recordInsightTool,
 } from '../src/mcp/server.js';
 
 function makeGraph(rows: Array<Record<string, unknown>> | Array<Array<Record<string, unknown>>>): {
@@ -45,11 +46,77 @@ test('knownContext computes ageSeconds from last_seen and filters null neighbors
   const lastSeen = new Date(Date.now() - 120_000).toISOString();
   const { graph } = makeGraph([
     [{ issue: { key: 'PV2-1', last_seen: lastSeen }, neighbors: [null, { relation: 'HAS_MR', label: 'MergeRequest' }] }],
+    [],
   ] as never);
   const result = await graph.knownContext('PV2-1');
   assert.equal(result.found, true);
   assert.equal(result.neighbors?.length, 1);
   assert.ok((result.ageSeconds ?? 0) >= 119 && (result.ageSeconds ?? 0) <= 130);
+  assert.deepEqual(result.insights, []);
+});
+
+test('knownContext excludes :Insight nodes from the generic neighbor list', async () => {
+  const { graph, queries } = makeGraph([
+    [{ issue: { key: 'PV2-1', last_seen: new Date().toISOString() }, neighbors: [] }],
+    [],
+  ] as never);
+  await graph.knownContext('PV2-1');
+  assert.match(queries[0]?.query ?? '', /NOT nb:Insight/);
+});
+
+test('recordInsight creates an Insight node and returns its id', async () => {
+  const recordedAt = new Date().toISOString();
+  const { graph, queries } = makeGraph([
+    [{ id: 'ignored', recorded_at: recordedAt }],
+  ] as never);
+  const result = await graph.recordInsight({
+    issueKey: 'PV2-18107',
+    rootCause: 'nested-route oldLocation broke the summary-page regex',
+    ruledOut: ['query-string regex', 'computeShouldBlock asymmetry'],
+    entities: [{ name: 'Bruno Parent Pichette', role: 'reporter' }],
+    relevantComments: [{ commentId: 'c1', relevance: 'high', why: 'names the exact repro' }],
+  });
+  assert.equal(result.found, true);
+  assert.equal(result.recorded_at, recordedAt);
+  assert.ok(result.id, 'a generated id is returned');
+  const call = queries[0];
+  assert.ok(call);
+  assert.equal(call.params.issueKey, 'PV2-18107');
+  assert.equal(call.params.rootCause, 'nested-route oldLocation broke the summary-page regex');
+  assert.deepEqual(call.params.ruledOut, ['query-string regex', 'computeShouldBlock asymmetry']);
+  assert.match(call.query, /CREATE \(ins:Insight/);
+  assert.match(call.query, /MERGE \(ins\)-\[:RECORDED_ON\]->\(i\)/);
+  // entities/relevantComments are JSON-encoded (Neo4j properties can't hold arrays of maps).
+  assert.deepEqual(JSON.parse(call.params.entities as string), [{ name: 'Bruno Parent Pichette', role: 'reporter' }]);
+});
+
+test('recordInsight reports found: false without writing when the issue is unknown', async () => {
+  const { graph } = makeGraph([[]] as never);
+  const result = await graph.recordInsight({ issueKey: 'PV2-NOPE', rootCause: 'x' });
+  assert.deepEqual(result, { found: false });
+});
+
+test('insightsForIssue decodes entities/relevantComments and orders newest first', async () => {
+  const { graph, queries } = makeGraph([
+    [
+      {
+        insight: {
+          id: 'i2',
+          rootCause: 'cause two',
+          ruledOut: [],
+          entities: JSON.stringify([{ name: 'Alice' }]),
+          relevantComments: JSON.stringify([{ commentId: 'c2', relevance: 'low' }]),
+          recorded_at: '2026-07-23T12:00:00.000Z',
+        },
+      },
+    ],
+  ] as never);
+  const insights = await graph.insightsForIssue('PV2-1');
+  assert.equal(insights.length, 1);
+  assert.equal(insights[0]?.rootCause, 'cause two');
+  assert.deepEqual(insights[0]?.entities, [{ name: 'Alice', role: undefined }]);
+  assert.deepEqual(insights[0]?.relevantComments, [{ commentId: 'c2', relevance: 'low', why: undefined }]);
+  assert.match(queries[0]?.query ?? '', /ORDER BY ins\.recorded_at DESC/);
 });
 
 test('personActivity passes the since cutoff and name', async () => {
@@ -250,4 +317,41 @@ test('findConnectionTool validates keys before querying', async () => {
   const result = await findConnectionTool('nope', 'PV2-2');
   assert.equal(result.isError, true);
   assert.match(result.content[0]?.text ?? '', /valid Jira keys/);
+});
+
+test('recordInsightTool validates the Jira key before querying', async () => {
+  const result = await recordInsightTool({ jiraKey: 'nope', rootCause: 'x' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0]?.text ?? '', /valid Jira key/);
+});
+
+test('recordInsightTool rejects an empty payload', async () => {
+  const result = await recordInsightTool({ jiraKey: 'PV2-1' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0]?.text ?? '', /at least one of/);
+});
+
+test('recordInsightTool succeeds with an injected graph', async () => {
+  const recordedAt = new Date().toISOString();
+  const { graph, queries } = makeGraph([[{ id: 'abc', recorded_at: recordedAt }]] as never);
+  const result = await recordInsightTool(
+    { jiraKey: 'pv2-18107', rootCause: 'nested-route regex gap', ruledOut: ['query string'] },
+    graph
+  );
+  assert.equal(result.isError, undefined);
+  const structured = result.structuredContent as { found: boolean; id: string; recorded_at: string };
+  assert.equal(structured.found, true);
+  assert.equal(structured.id, 'abc');
+  assert.equal(structured.recorded_at, recordedAt);
+  // Jira key is uppercased before hitting the graph, like every other tool.
+  assert.equal(queries[0]?.params.issueKey, 'PV2-18107');
+});
+
+test('recordInsightTool reports found: false with guidance when the issue is unknown', async () => {
+  const { graph } = makeGraph([[]] as never);
+  const result = await recordInsightTool({ jiraKey: 'PV2-9999', rootCause: 'x' }, graph);
+  assert.equal(result.isError, undefined);
+  const structured = result.structuredContent as { found: boolean; message: string };
+  assert.equal(structured.found, false);
+  assert.match(structured.message, /run get_context/);
 });

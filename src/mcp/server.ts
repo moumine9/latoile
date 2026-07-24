@@ -21,6 +21,8 @@
  *   get_issue(jiraKey) — single issue fetch (no traversal, cache-backed).
  *   find_connection / known_context / person_activity / graph_stats —
  *     offline queries over the Neo4j knowledge graph.
+ *   record_insight(jiraKey, rootCause?, ruledOut?, entities?, relevantComments?) —
+ *     write a diagnosis back to the graph (PLAN-LEARNING.md); surfaced by known_context.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -35,6 +37,7 @@ import {
   knownContextTool,
   personActivityTool,
   projectActivityTool,
+  recordInsightTool,
   searchIssuesTool,
   type PipelineFn,
   type ProgressFn,
@@ -69,6 +72,18 @@ const traversalInfoSchema = z
       .describe('Neighbors past maxDepth left unresolved — raise maxDepth for more (live/partial only)'),
   })
   .describe('Traversal completeness signal');
+
+/** An `:Insight` node as read back — see PLAN-LEARNING.md. */
+const insightSchema = z.object({
+  id: z.string(),
+  rootCause: z.string().optional(),
+  ruledOut: z.array(z.string()),
+  entities: z.array(z.object({ name: z.string(), role: z.string().optional() })),
+  relevantComments: z.array(
+    z.object({ commentId: z.string(), relevance: z.enum(['high', 'low']), why: z.string().optional() })
+  ),
+  recorded_at: z.string(),
+});
 
 /** Extra argument shape shared by the tool callbacks below. */
 type ToolCallExtra = {
@@ -265,6 +280,10 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         issue: looseObject().optional(),
         neighbors: z.array(looseObject()).optional(),
         ageSeconds: z.number().optional().describe('Seconds since last live refresh'),
+        insights: z
+          .array(insightSchema)
+          .optional()
+          .describe('Prior agent-recorded diagnoses for this issue, newest first — see record_insight'),
       },
     },
     (args) => tracked(knownContextTool(args.jiraKey))
@@ -327,6 +346,51 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
       },
     },
     () => tracked(graphStatsTool())
+  );
+
+  server.registerTool(
+    'record_insight',
+    {
+      title: 'Record what you learned investigating an issue',
+      description:
+        'Writes a diagnosis back to the knowledge graph so a future investigation of a ' +
+        'related issue starts smarter: confirmed root cause, hypotheses you ruled out, ' +
+        'entities named in comments, and comment relevance judgments. There is no MCP ' +
+        'sampling support in Claude Code, so latoile cannot extract this itself — call this ' +
+        'after YOU (the calling agent) have done the reasoning, typically once a bug is ' +
+        'diagnosed or a hypothesis is confirmed/rejected. Additive: does not overwrite prior ' +
+        'insights on the same issue. The issue must already exist in the knowledge graph ' +
+        '(run get_context on it first). Surfaced back via known_context.',
+      inputSchema: {
+        jiraKey: z.string().describe('Jira issue key this insight is about, e.g. PV2-17830'),
+        rootCause: z.string().optional().describe('Confirmed root cause, once diagnosed'),
+        ruledOut: z
+          .array(z.string())
+          .optional()
+          .describe('Hypotheses investigated and rejected — as valuable as the confirmed cause'),
+        entities: z
+          .array(z.object({ name: z.string(), role: z.string().optional() }))
+          .optional()
+          .describe('People/systems/decisions named in comments that mattered to this investigation'),
+        relevantComments: z
+          .array(
+            z.object({
+              commentId: z.string(),
+              relevance: z.enum(['high', 'low']),
+              why: z.string().optional(),
+            })
+          )
+          .optional()
+          .describe('Comment relevance judgments'),
+      },
+      outputSchema: {
+        found: z.boolean().describe('False when the issue is not yet in the knowledge graph'),
+        id: z.string().optional(),
+        recorded_at: z.string().optional(),
+        message: z.string().optional(),
+      },
+    },
+    (args) => tracked(recordInsightTool(args))
   );
 
   return server;

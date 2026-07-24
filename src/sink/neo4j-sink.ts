@@ -25,6 +25,9 @@ export type Neo4jSinkDeps = {
   log?: LogFn;
 }
 
+// :Insight is written by KnowledgeGraph.recordInsight (src/sink/knowledge-graph.ts),
+// not by ingest() below — it's a single agent-recorded annotation, not bulk
+// traversal data. The constraint lives here because this file owns the schema.
 const CONSTRAINTS = [
   'CREATE CONSTRAINT issue_key IF NOT EXISTS FOR (n:Issue) REQUIRE n.key IS UNIQUE',
   'CREATE CONSTRAINT mr_id IF NOT EXISTS FOR (n:MergeRequest) REQUIRE (n.project, n.iid) IS UNIQUE',
@@ -33,6 +36,7 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT doc_url IF NOT EXISTS FOR (n:Doc) REQUIRE n.url IS UNIQUE',
   'CREATE CONSTRAINT project_path IF NOT EXISTS FOR (n:Project) REQUIRE n.path IS UNIQUE',
   'CREATE CONSTRAINT file_key IF NOT EXISTS FOR (n:File) REQUIRE (n.project, n.path) IS UNIQUE',
+  'CREATE CONSTRAINT insight_id IF NOT EXISTS FOR (n:Insight) REQUIRE n.id IS UNIQUE',
 ];
 
 /**

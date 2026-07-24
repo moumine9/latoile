@@ -380,6 +380,40 @@ export type ContextResult = {
   traversal?: ContextTraversalInfo;
 }
 
+/**
+ * An entity (person, system, decision) named in an issue's comments, recorded
+ * by an agent that already read them — see PLAN-LEARNING.md. Not extracted by
+ * latoile itself (no MCP sampling support in Claude Code as of 2026-07-23);
+ * the calling agent does the reasoning and writes the result back.
+ */
+export type InsightEntity = {
+  name: string;
+  role?: string;
+}
+
+/** A comment an agent judged worth surfacing (or not) during an investigation. */
+export type InsightCommentRef = {
+  commentId: string;
+  relevance: 'high' | 'low';
+  why?: string;
+}
+
+/**
+ * What an agent recorded after investigating an issue — additive, never
+ * overwrites prior insights on the same issue (see PLAN-LEARNING.md). Treat
+ * as a hint for a future investigation, not verified ground truth: nothing
+ * checks that the recording agent's diagnosis was correct.
+ */
+export type InsightInput = {
+  issueKey: string;
+  /** Confirmed root cause, once diagnosed. */
+  rootCause?: string;
+  /** Hypotheses investigated and rejected — as valuable as the confirmed cause. */
+  ruledOut?: string[];
+  entities?: InsightEntity[];
+  relevantComments?: InsightCommentRef[];
+}
+
 /** A function that runs a CLI binary with an argument vector. */
 export type RunFn = (bin: string, args: string[]) => Promise<string>;
 
