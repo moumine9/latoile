@@ -185,6 +185,21 @@ drift (each repo is indexed at whatever branch was checked out, not the MR's bra
 worth periodically re-running `scripts/orbit-reindex.ps1 -Clean` against current `develop2`/
 `main` to keep the match rate meaningful.
 
+## Backlog — local graph visualizer (not started)
+
+Considered 2026-07-23: a viewer for the local Orbit DuckDB graph (`~/.orbit/graph.duckdb`),
+beyond ad-hoc `run_sql`/`duckdb` CLI queries. Not worth building yet — tabular inspection is
+already well served by existing SQL tools (`duckdb` CLI, Harlequin, etc.), so a bespoke
+visualizer would be solving a problem we don't have. It would earn its keep for exploring the
+*graph* shape specifically: cross-repo `gl_definition`/`gl_edge` relationships, or at-a-glance
+branch-freshness across indexed repos (the branch-drift problem, see Phase 1's "Known
+limitation"). If built, latoile's existing Cytoscape renderer (`public/`, `src/web/app.ts`)
+is the natural starting point rather than a new viewer from scratch — repoint it at
+`gl_file`/`gl_definition`/`gl_edge` instead of the Jira/GitLab graph.
+
+**Trigger to revisit:** a concrete moment where trusting a `code` neighborhood in a context
+payload requires visually verifying what it connects to, and tabular queries aren't enough.
+
 ## Risks / non-goals
 
 - **Beta.** Orbit is GitLab 19.1 beta; CLI, schema (`gl_*` tables), and MCP tool names may
