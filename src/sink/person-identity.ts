@@ -33,10 +33,21 @@ export function isDisplayName(value: string): boolean {
 }
 
 /**
- * Bump when the key derivation changes: the sink deletes Person nodes written
- * under an older version so they re-materialize under the current keys.
+ * Bump when the key derivation changes, or when the set of facts written onto
+ * `:Person` changes shape (e.g. added labels): the sink deletes Person nodes
+ * written under an older version so they re-materialize under the current
+ * schema on next sighting.
+ *
+ * v3 adds secondary labels recording which systems a person is known to have
+ * access to: `:JiraUser` (seen as a Jira assignee) and `:GitlabUser` (seen as
+ * a GitLab MR or commit author). Jira exposes no ACL/role field through acli,
+ * so "access" here means *observed activity*, not a permissions lookup — a
+ * QA/analyst who only ever appears as a Jira assignee stays `:Person:JiraUser`,
+ * a developer who does both accumulates both labels. This lets queries filter
+ * on capability (`MATCH (p:Person:GitlabUser)` = "people who can author code")
+ * without a Jira-side source of truth for roles.
  */
-export const PERSON_SCHEMA_VERSION = 2;
+export const PERSON_SCHEMA_VERSION = 3;
 
 /**
  * Canonical Person key. Display names become first-name initials (one per

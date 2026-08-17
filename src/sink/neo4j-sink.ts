@@ -182,7 +182,8 @@ export class Neo4jSink implements GraphSink {
        SET p.last_seen = datetime(),
            p.schemaVersion = ${PERSON_SCHEMA_VERSION},
            p.name = coalesce(p.name, a.assignee),
-           p.jiraName = a.assignee
+           p.jiraName = a.assignee,
+           p:JiraUser
        MERGE (i)-[r:ASSIGNED_TO]->(p)
        SET r.last_seen = datetime()`,
       {
@@ -257,7 +258,8 @@ export class Neo4jSink implements GraphSink {
          SET p.last_seen = datetime(),
              p.schemaVersion = ${PERSON_SCHEMA_VERSION},
              p.gitlabUsername = m.author,
-             p.name = coalesce(p.name, m.author)
+             p.name = coalesce(p.name, m.author),
+             p:GitlabUser
          MERGE (mr)-[ar:AUTHORED_BY]->(p)
          SET ar.last_seen = datetime())`,
       { mrs }
@@ -278,7 +280,8 @@ export class Neo4jSink implements GraphSink {
          SET p.last_seen = datetime(),
              p.schemaVersion = ${PERSON_SCHEMA_VERSION},
              // A display name is the best label we ever get — let it win.
-             p.name = CASE WHEN c.authorIsDisplay THEN c.author ELSE coalesce(p.name, c.author) END
+             p.name = CASE WHEN c.authorIsDisplay THEN c.author ELSE coalesce(p.name, c.author) END,
+             p:GitlabUser
          MERGE (cm)-[ar:AUTHORED_BY]->(p)
          SET ar.last_seen = datetime())`,
       { commits }

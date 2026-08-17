@@ -174,7 +174,14 @@ export type ProjectActivityResult = {
 }
 
 export type PersonActivityMatch = {
-  person: { key: string; name?: string; jiraName?: string; gitlabUsername?: string };
+  person: {
+    key: string;
+    name?: string;
+    jiraName?: string;
+    gitlabUsername?: string;
+    /** Systems this person has been observed acting in — derived from Person's secondary labels. */
+    access: Array<'jira' | 'gitlab'>;
+  };
   issues: Array<{ key: string; title?: string; status?: string }>;
   mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string }>;
   commitCount: number;
@@ -343,7 +350,10 @@ export class KnowledgeGraph {
        OPTIONAL MATCH (mr:MergeRequest)-[:AUTHORED_BY]->(p) WHERE mr.last_seen >= datetime($since)
        WITH p, issues, collect(DISTINCT mr {.project, .iid, .title, .state}) AS mergeRequests
        OPTIONAL MATCH (c:Commit)-[:AUTHORED_BY]->(p) WHERE c.last_seen >= datetime($since)
-       RETURN p {.key, .name, .jiraName, .gitlabUsername} AS person,
+       RETURN p {.key, .name, .jiraName, .gitlabUsername,
+                 access: [l IN labels(p) WHERE l IN ['JiraUser', 'GitlabUser'] |
+                          CASE l WHEN 'JiraUser' THEN 'jira' ELSE 'gitlab' END]
+                } AS person,
               issues, mergeRequests, count(DISTINCT c) AS commitCount`,
       { name, normalized: normalizePersonToken(name), since }
     );
