@@ -38,16 +38,16 @@ export function isDisplayName(value: string): boolean {
  * written under an older version so they re-materialize under the current
  * schema on next sighting.
  *
- * v3 adds secondary labels recording which systems a person is known to have
- * access to: `:JiraUser` (seen as a Jira assignee) and `:GitlabUser` (seen as
- * a GitLab MR or commit author). Jira exposes no ACL/role field through acli,
- * so "access" here means *observed activity*, not a permissions lookup — a
- * QA/analyst who only ever appears as a Jira assignee stays `:Person:JiraUser`,
- * a developer who does both accumulates both labels. This lets queries filter
- * on capability (`MATCH (p:Person:GitlabUser)` = "people who can author code")
- * without a Jira-side source of truth for roles.
+ * v3 added secondary labels recording which systems a person is known to
+ * have access to: `:JiraUser` (seen as a Jira assignee) and `:GitlabUser`
+ * (seen as a GitLab MR author). Jira exposes no ACL/role field through acli,
+ * so "access" here means *observed activity*, not a permissions lookup.
+ *
+ * v4: commit authors no longer get `:GitlabUser` — GitLab's commits API
+ * returns a free-text author name, not a linked account, so commit
+ * authorship alone doesn't prove GitLab access.
  */
-export const PERSON_SCHEMA_VERSION = 3;
+export const PERSON_SCHEMA_VERSION = 4;
 
 /**
  * Canonical Person key. Display names become first-name initials (one per
