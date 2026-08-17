@@ -238,7 +238,7 @@ export class KnowledgeGraph {
   async knownContext(key: string): Promise<KnownContextResult> {
     const rows = await this.deps.query(
       `MATCH (i:Issue {key: $key})
-       OPTIONAL MATCH (i)-[r]-(nb) WHERE nb IS NULL OR NOT nb:Insight
+       OPTIONAL MATCH (i)-[r]-(nb) WHERE NOT nb:Insight
        WITH i, r, nb
        RETURN i {.key, .title, .type, .status, .assignee, .resolved,
                  first_seen: toString(i.first_seen), last_seen: toString(i.last_seen)} AS issue,
