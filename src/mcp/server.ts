@@ -22,7 +22,7 @@
  *   find_connection / known_context / person_activity / graph_stats —
  *     offline queries over the Neo4j knowledge graph.
  *   record_insight(jiraKey, rootCause?, ruledOut?, entities?, relevantComments?) —
- *     write a diagnosis back to the graph (PLAN-LEARNING.md); surfaced by known_context.
+ *     write a diagnosis back to the graph (PLAN.md, section 5); surfaced by known_context.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -73,7 +73,7 @@ const traversalInfoSchema = z
   })
   .describe('Traversal completeness signal');
 
-/** An `:Insight` node as read back — see PLAN-LEARNING.md. */
+/** An `:Insight` node as read back — see PLAN.md, section 5. */
 const insightSchema = z.object({
   id: z.string(),
   rootCause: z.string().optional(),

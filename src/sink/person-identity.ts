@@ -15,7 +15,7 @@
  * gitlabUsername).
  *
  * Known limitation: two people sharing a first initial and last name collide.
- * Accepted for now — see PLAN-NEO4J.md (identity mapping table if it happens).
+ * Accepted for now — see PLAN.md, section 1 (identity mapping table if it happens).
  */
 
 /** Lowercases, strips accents, drops everything but letters and digits. */

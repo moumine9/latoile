@@ -1,6 +1,6 @@
 /**
- * Read side of the Neo4j knowledge graph (PLAN-NEO4J.md phase 2), plus one
- * deliberate write path: `recordInsight` (PLAN-LEARNING.md). Insights are a
+ * Read side of the Neo4j knowledge graph (PLAN.md, section 2), plus one
+ * deliberate write path: `recordInsight` (PLAN.md, section 5). Insights are a
  * single agent-recorded annotation, not bulk traversal data, so they don't
  * belong in Neo4jSink's `ingest()` — but they share this class's connection
  * and read query for the same issue, so a separate write-side class would
@@ -94,7 +94,7 @@ export type KnownContextResult = {
   neighbors?: StoredNeighbor[];
   /** Seconds since this issue was last refreshed from live sources. */
   ageSeconds?: number;
-  /** Prior agent-recorded diagnoses for this issue, newest first — see PLAN-LEARNING.md. */
+  /** Prior agent-recorded diagnoses for this issue, newest first — see PLAN.md, section 5. */
   insights?: StoredInsight[];
 }
 
@@ -266,7 +266,7 @@ export class KnowledgeGraph {
   }
 
   /**
-   * Records what an agent learned investigating an issue (PLAN-LEARNING.md):
+   * Records what an agent learned investigating an issue (PLAN.md, section 5):
    * confirmed root cause, ruled-out hypotheses, named entities, and comment
    * relevance judgments. Additive — a second call creates a new `:Insight`
    * node rather than overwriting the first, so a later pass can supersede
@@ -621,7 +621,7 @@ export class KnowledgeGraph {
   /**
    * Keys of resolved issues whose `last_seen` is older than `staleMinutes`,
    * oldest first — the refresh frontier for the background watcher (see
-   * PLAN-NEO4J.md phase 3). Placeholders (never resolved) are excluded: the
+   * PLAN.md, section 1). Placeholders (never resolved) are excluded: the
    * watcher re-verifies what it once knew, it doesn't explore.
    */
   async staleIssueKeys(staleMinutes: number, limit: number): Promise<string[]> {

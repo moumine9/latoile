@@ -11,7 +11,7 @@
  * `project_id` is a synthetic hash (NOT GitLab's id), so repos are matched by
  * their last path segment, lowercased, against `_orbit_manifest.repo_path`. MR
  * changed-file paths are repo-root-relative and match `gl_definition.file_path`
- * directly. See PLAN-ORBIT.md.
+ * directly. See PLAN.md, section 4.
  *
  * Everything here is best-effort and branch-approximate — see the caveats on
  * `ContextCodeNeighborhood`.

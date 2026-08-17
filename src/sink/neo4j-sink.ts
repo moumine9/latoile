@@ -1,5 +1,5 @@
 /**
- * Neo4j implementation of GraphSink (see PLAN-NEO4J.md).
+ * Neo4j implementation of GraphSink (see PLAN.md, section 1).
  *
  * Persists the raw traversal result — including commits and people that the
  * visualization deliberately drops — as an append-only knowledge graph:

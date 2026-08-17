@@ -183,7 +183,7 @@ export async function getIssueTool(jiraKey: string, fetcher?: IssueFetcher): Pro
 /* ------------------------- knowledge-graph tools -------------------------- */
 
 const KG_UNCONFIGURED =
-  'Knowledge graph is not configured. Set LATOILE_NEO4J_URI (and LATOILE_NEO4J_PASSWORD) to enable it — see PLAN-NEO4J.md.';
+  'Knowledge graph is not configured. Set LATOILE_NEO4J_URI (and LATOILE_NEO4J_PASSWORD) to enable it — see PLAN.md, section 1.';
 
 type KgHandler = (graph: KnowledgeGraph) => Promise<object>;
 

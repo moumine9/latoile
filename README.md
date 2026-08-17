@@ -97,7 +97,7 @@ curl "http://localhost:3000/api/graph/JIRA-123?view=context&maxDepth=2"
 | `LATOILE_GITLAB_ACTIVE_DAYS` | `90` | Skip group projects with no activity in this many days |
 | `LATOILE_GITLAB_CONCURRENCY` | `8` | Max parallel GitLab API requests — lower it if you hit 429s |
 | `LATOILE_GITLAB_MAX_RETRIES` | `4` | Retries on an HTTP 429, honoring `Retry-After`/`RateLimit-Reset` with capped backoff |
-| `LATOILE_ORBIT` | _(off)_ | Set to `1` to attach a per-issue code neighborhood from a local [GitLab Orbit](https://docs.gitlab.com/orbit/) graph (see PLAN-ORBIT.md); needs `LATOILE_GITLAB_FETCH_FILES=1` too |
+| `LATOILE_ORBIT` | _(off)_ | Set to `1` to attach a per-issue code neighborhood from a local [GitLab Orbit](https://docs.gitlab.com/orbit/) graph (see PLAN.md, section 4); needs `LATOILE_GITLAB_FETCH_FILES=1` too |
 | `LATOILE_ORBIT_BIN` | `orbit` | Orbit CLI binary |
 | `LATOILE_ORBIT_DB` | _(default)_ | Override the Orbit DuckDB path (default: `~/.orbit/graph.duckdb`) |
 | `LATOILE_ORBIT_MAX_DEFS` | `40` | Max definitions returned per touched repo |
@@ -143,7 +143,7 @@ Neo4j browser at http://localhost:7474). Start the database with
 `docker compose up -d neo4j` and set `LATOILE_NEO4J_URI` +
 `LATOILE_NEO4J_PASSWORD` in `.env`. Without configuration the feature is
 simply off; if the database is down, runs proceed and log a warning. Design
-and roadmap (query tools, incremental refresh): [PLAN-NEO4J.md](PLAN-NEO4J.md).
+and roadmap (query tools, incremental refresh): [PLAN.md](PLAN.md), section 1.
 
 ### MCP server
 

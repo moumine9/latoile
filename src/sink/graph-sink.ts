@@ -1,5 +1,5 @@
 /**
- * Persistence hook for the knowledge graph (see PLAN-NEO4J.md).
+ * Persistence hook for the knowledge graph (see PLAN.md, section 1).
  *
  * The pipeline hands every raw `TraversalResult` to a sink after traversal so
  * coverage accumulates across runs. The pipeline depends only on this

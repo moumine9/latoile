@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Background watcher (PLAN-NEO4J.md phase 3): a one-shot re-traversal of the
+ * Background watcher (PLAN.md, section 1): a one-shot re-traversal of the
  * stalest known issues in the knowledge graph, meant to be run periodically
  * by an external scheduler (cron, Windows Task Scheduler, etc.) rather than
  * as a long-lived daemon — the pipeline and sink are already request-shaped,

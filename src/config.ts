@@ -97,7 +97,7 @@ export type Config = {
    * Opt-in: enrich the context payload with a "code neighborhood" from a local
    * GitLab Orbit graph (definitions in the files each issue's MRs touched). Off
    * by default; needs Orbit Local installed and repos indexed, and only adds
-   * data when `gitlabFetchChangedFiles` is also on. See PLAN-ORBIT.md.
+   * data when `gitlabFetchChangedFiles` is also on. See PLAN.md, section 4.
    */
   orbitEnabled: boolean;
   /** Orbit CLI binary. */

@@ -382,7 +382,7 @@ export type ContextResult = {
 
 /**
  * An entity (person, system, decision) named in an issue's comments, recorded
- * by an agent that already read them — see PLAN-LEARNING.md. Not extracted by
+ * by an agent that already read them — see PLAN.md, section 5. Not extracted by
  * latoile itself (no MCP sampling support in Claude Code as of 2026-07-23);
  * the calling agent does the reasoning and writes the result back.
  */
@@ -400,7 +400,7 @@ export type InsightCommentRef = {
 
 /**
  * What an agent recorded after investigating an issue — additive, never
- * overwrites prior insights on the same issue (see PLAN-LEARNING.md). Treat
+ * overwrites prior insights on the same issue (see PLAN.md, section 5). Treat
  * as a hint for a future investigation, not verified ground truth: nothing
  * checks that the recording agent's diagnosis was correct.
  */
