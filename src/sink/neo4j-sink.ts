@@ -280,8 +280,7 @@ export class Neo4jSink implements GraphSink {
          SET p.last_seen = datetime(),
              p.schemaVersion = ${PERSON_SCHEMA_VERSION},
              // A display name is the best label we ever get — let it win.
-             p.name = CASE WHEN c.authorIsDisplay THEN c.author ELSE coalesce(p.name, c.author) END,
-             p:GitlabUser
+             p.name = CASE WHEN c.authorIsDisplay THEN c.author ELSE coalesce(p.name, c.author) END
          MERGE (cm)-[ar:AUTHORED_BY]->(p)
          SET ar.last_seen = datetime())`,
       { commits }

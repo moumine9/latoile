@@ -216,7 +216,7 @@ export async function buildContextGraph(
   const orbit = resolveOrbit(config, options, log);
   if (orbit) {
     try {
-      await enrichContextWithCode(context, traversal, orbit, config.orbitMaxDefinitions);
+      await enrichContextWithCode(context, traversal, orbit, config.orbitMaxDefinitions, log);
     } catch (err) {
       log(`Orbit code enrichment failed (${err instanceof Error ? err.message : String(err)})`);
     }
@@ -257,7 +257,8 @@ async function enrichContextWithCode(
   context: ContextResult,
   traversal: TraversalResult,
   orbit: OrbitSource,
-  maxDefinitions: number
+  maxDefinitions: number,
+  log: LogFn
 ): Promise<void> {
   for (const item of context.items) {
     const key = item.work_item.id;
@@ -271,7 +272,7 @@ async function enrichContextWithCode(
         changedFiles: mr.changedFiles,
       })),
     };
-    const code = await codeNeighborhoodsForIssue(issue, orbit, maxDefinitions);
+    const code = await codeNeighborhoodsForIssue(issue, orbit, maxDefinitions, log);
     if (code) item.code = code;
   }
 }
