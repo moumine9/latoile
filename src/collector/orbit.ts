@@ -75,26 +75,15 @@ export class OrbitClient implements OrbitSource {
     this.log = log;
   }
 
-  /** Runs a read-only SQL query and returns parsed rows (`[]` on empty/failure). */
+  /** Runs a read-only SQL query. `[]` means genuinely no rows; throws on CLI/parse failure. */
   async sql<T>(query: string): Promise<T[]> {
     const args = ['sql', query, '-F', 'json'];
     if (this.dbPath) args.push('--db', this.dbPath);
-    let stdout: string;
-    try {
-      stdout = await this.run(this.bin, args);
-    } catch (err) {
-      this.log(`orbit: query failed (${err instanceof Error ? err.message : String(err)})`);
-      return [];
-    }
+    const stdout = await this.run(this.bin, args);
     const trimmed = stdout.trim();
     if (!trimmed) return [];
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      return Array.isArray(parsed) ? (parsed as T[]) : [];
-    } catch (err) {
-      this.log(`orbit: could not parse JSON output (${err instanceof Error ? err.message : String(err)})`);
-      return [];
-    }
+    const parsed: unknown = JSON.parse(trimmed);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
   }
 
   /**
@@ -109,12 +98,20 @@ export class OrbitClient implements OrbitSource {
 
     // repo_path uses OS separators (backslash on Windows); normalize to '/'
     // before taking the last segment so the match is portable.
+    // A repo indexed from multiple branches yields multiple rows here; order
+    // deterministically (no indexed-at column to prefer "latest") and log it.
     const rows = await this.sql<ManifestRow>(
       "SELECT CAST(project_id AS VARCHAR) AS project_id, repo_path, branch, commit_sha " +
         "FROM _orbit_manifest " +
         `WHERE lower(list_last(string_split(replace(repo_path, '\\', '/'), '/'))) = ${sqlString(key)} ` +
-        'LIMIT 1'
+        'ORDER BY branch, commit_sha'
     );
+    if (rows.length > 1) {
+      const branches = [...new Set(rows.map((r) => r.branch ?? '(unknown)'))];
+      this.log(
+        `orbit: "${repoName}" indexed from ${rows.length} manifest entries (branches: ${branches.join(', ')}); using "${rows[0]?.branch ?? '(unknown)'}"`
+      );
+    }
     const row = rows[0];
     const repo: OrbitRepo | null =
       row && typeof row.project_id === 'string' && /^\d+$/.test(row.project_id)
@@ -190,7 +187,8 @@ function changedFilesByRepo(issue: IssueForCode): Map<string, Set<string>> {
 export async function codeNeighborhoodsForIssue(
   issue: IssueForCode,
   orbit: OrbitSource,
-  maxDefinitions: number
+  maxDefinitions: number,
+  log: LogFn = () => {}
 ): Promise<ContextCodeNeighborhood[] | undefined> {
   const byRepo = changedFilesByRepo(issue);
   if (byRepo.size === 0) return undefined;
@@ -198,29 +196,35 @@ export async function codeNeighborhoodsForIssue(
   const out: ContextCodeNeighborhood[] = [];
   for (const [repository, fileSet] of byRepo) {
     const files = [...fileSet];
-    const repo = await orbit.resolveRepo(repoNameFromPath(repository));
-    if (!repo) {
+    try {
+      const repo = await orbit.resolveRepo(repoNameFromPath(repository));
+      if (!repo) {
+        out.push({
+          repository,
+          indexed: false,
+          branch: undefined,
+          commit_sha: undefined,
+          files_changed: files.length,
+          files_matched: 0,
+          definitions: [],
+        });
+        continue;
+      }
+      const { filesMatched, definitions } = await orbit.definitionsForFiles(repo.projectId, files, maxDefinitions);
       out.push({
         repository,
-        indexed: false,
-        branch: undefined,
-        commit_sha: undefined,
+        indexed: true,
+        branch: repo.branch,
+        commit_sha: repo.commitSha,
         files_changed: files.length,
-        files_matched: 0,
-        definitions: [],
+        files_matched: filesMatched,
+        definitions,
       });
-      continue;
+    } catch (err) {
+      // A real orbit CLI failure, not "no rows" — skip this repo rather than
+      // reporting it as unindexed or falsely matched.
+      log(`orbit: skipping "${repository}" (${err instanceof Error ? err.message : String(err)})`);
     }
-    const { filesMatched, definitions } = await orbit.definitionsForFiles(repo.projectId, files, maxDefinitions);
-    out.push({
-      repository,
-      indexed: true,
-      branch: repo.branch,
-      commit_sha: repo.commitSha,
-      files_changed: files.length,
-      files_matched: filesMatched,
-      definitions,
-    });
   }
   return out;
 }
