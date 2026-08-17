@@ -21,6 +21,8 @@
  *   get_issue(jiraKey) — single issue fetch (no traversal, cache-backed).
  *   find_connection / known_context / person_activity / graph_stats —
  *     offline queries over the Neo4j knowledge graph.
+ *   record_insight(jiraKey, rootCause?, ruledOut?, entities?, relevantComments?) —
+ *     write a diagnosis back to the graph (PLAN-LEARNING.md); surfaced by known_context.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -35,6 +37,7 @@ import {
   knownContextTool,
   personActivityTool,
   projectActivityTool,
+  recordInsightTool,
   searchIssuesTool,
   type PipelineFn,
   type ProgressFn,
@@ -47,6 +50,40 @@ export * from './lifecycle.js';
 export * from './tool-result.js';
 
 const looseObject = (): ReturnType<typeof z.looseObject> => z.looseObject({});
+
+/**
+ * Traversal completeness surfaced on the context payload so a caller can tell a
+ * genuine empty neighborhood from a budget-truncated one. `node_cap_hit` and
+ * `depth_limit_hit` imply different remedies (raise maxNodes vs. raise maxDepth).
+ */
+const traversalInfoSchema = z
+  .object({
+    nodes_fetched: z.number().describe('Issues actually fetched and resolved'),
+    total_nodes: z.number().describe('Nodes discovered, including unresolved placeholders'),
+    // Depth fields are omitted on knowledge_graph-served payloads (the stored
+    // query cannot report per-node depth), so they are optional.
+    depth_reached: z.number().optional().describe('Deepest resolved issue distance from the entry (live/partial only)'),
+    max_depth: z.number(),
+    max_nodes: z.number(),
+    node_cap_hit: z.boolean().describe('Node cap stopped fetching — raise maxNodes for more'),
+    depth_limit_hit: z
+      .boolean()
+      .optional()
+      .describe('Neighbors past maxDepth left unresolved — raise maxDepth for more (live/partial only)'),
+  })
+  .describe('Traversal completeness signal');
+
+/** An `:Insight` node as read back — see PLAN-LEARNING.md. */
+const insightSchema = z.object({
+  id: z.string(),
+  rootCause: z.string().optional(),
+  ruledOut: z.array(z.string()),
+  entities: z.array(z.object({ name: z.string(), role: z.string().optional() })),
+  relevantComments: z.array(
+    z.object({ commentId: z.string(), relevance: z.enum(['high', 'low']), why: z.string().optional() })
+  ),
+  recorded_at: z.string(),
+});
 
 /** Extra argument shape shared by the tool callbacks below. */
 type ToolCallExtra = {
@@ -100,8 +137,8 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         'is provided.',
       inputSchema: {
         jiraKey: z.string().describe('Entry-point Jira issue key, e.g. PV2-17830'),
-        maxDepth: z.number().int().min(0).max(5).optional().describe('Traversal depth from the entry issue (default 1)'),
-        maxNodes: z.number().int().min(1).max(500).optional().describe('Hard cap on fetched issues (default 50)'),
+        maxDepth: z.number().int().min(0).max(5).optional().describe('Traversal depth from the entry issue (default 2)'),
+        maxNodes: z.number().int().min(1).max(500).optional().describe('Hard cap on fetched issues (default 100)'),
         refresh: z.boolean().optional().describe('Bypass the cache and fetch everything live'),
         maxAgeSeconds: z
           .number()
@@ -117,6 +154,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
           .array(z.string())
           .describe('Every GitLab project touched in this context — a fix should consider all of them'),
         traceability: looseObject().describe('Jira-key ↔ merge-request link table'),
+        traversal: traversalInfoSchema.optional(),
         source: z
           .enum(['live', 'knowledge_graph', 'partial'])
           .describe('live = full traversal; knowledge_graph = fully stored; partial = only the stale frontier was fetched live'),
@@ -138,8 +176,8 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         'when you have an MR link instead of a Jira key — e.g. when reviewing an MR.',
       inputSchema: {
         mrUrl: z.string().describe('GitLab MR URL, e.g. https://gitlab.com/group/project/-/merge_requests/123'),
-        maxDepth: z.number().int().min(0).max(5).optional().describe('Traversal depth from the resolved issue (default 1)'),
-        maxNodes: z.number().int().min(1).max(500).optional().describe('Hard cap on fetched issues (default 50)'),
+        maxDepth: z.number().int().min(0).max(5).optional().describe('Traversal depth from the resolved issue (default 2)'),
+        maxNodes: z.number().int().min(1).max(500).optional().describe('Hard cap on fetched issues (default 100)'),
         refresh: z.boolean().optional().describe('Bypass the cache and fetch everything live'),
       },
       outputSchema: {
@@ -153,6 +191,7 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         }),
         items: z.array(looseObject()).describe('One unified work-item object per resolved issue'),
         traceability: looseObject().describe('Jira-key ↔ merge-request link table'),
+        traversal: traversalInfoSchema.optional(),
       },
     },
     (args, extra) => tracked(getContextFromMrTool(args, undefined, progressReporter(server, extra)))
@@ -241,6 +280,10 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
         issue: looseObject().optional(),
         neighbors: z.array(looseObject()).optional(),
         ageSeconds: z.number().optional().describe('Seconds since last live refresh'),
+        insights: z
+          .array(insightSchema)
+          .optional()
+          .describe('Prior agent-recorded diagnoses for this issue, newest first — see record_insight'),
       },
     },
     (args) => tracked(knownContextTool(args.jiraKey))
@@ -303,6 +346,51 @@ export function createMcpServer(run: PipelineFn = buildContextGraph): McpServer 
       },
     },
     () => tracked(graphStatsTool())
+  );
+
+  server.registerTool(
+    'record_insight',
+    {
+      title: 'Record what you learned investigating an issue',
+      description:
+        'Writes a diagnosis back to the knowledge graph so a future investigation of a ' +
+        'related issue starts smarter: confirmed root cause, hypotheses you ruled out, ' +
+        'entities named in comments, and comment relevance judgments. There is no MCP ' +
+        'sampling support in Claude Code, so latoile cannot extract this itself — call this ' +
+        'after YOU (the calling agent) have done the reasoning, typically once a bug is ' +
+        'diagnosed or a hypothesis is confirmed/rejected. Additive: does not overwrite prior ' +
+        'insights on the same issue. The issue must already exist in the knowledge graph ' +
+        '(run get_context on it first). Surfaced back via known_context.',
+      inputSchema: {
+        jiraKey: z.string().describe('Jira issue key this insight is about, e.g. PV2-17830'),
+        rootCause: z.string().optional().describe('Confirmed root cause, once diagnosed'),
+        ruledOut: z
+          .array(z.string())
+          .optional()
+          .describe('Hypotheses investigated and rejected — as valuable as the confirmed cause'),
+        entities: z
+          .array(z.object({ name: z.string(), role: z.string().optional() }))
+          .optional()
+          .describe('People/systems/decisions named in comments that mattered to this investigation'),
+        relevantComments: z
+          .array(
+            z.object({
+              commentId: z.string(),
+              relevance: z.enum(['high', 'low']),
+              why: z.string().optional(),
+            })
+          )
+          .optional()
+          .describe('Comment relevance judgments'),
+      },
+      outputSchema: {
+        found: z.boolean().describe('False when the issue is not yet in the knowledge graph'),
+        id: z.string().optional(),
+        recorded_at: z.string().optional(),
+        message: z.string().optional(),
+      },
+    },
+    (args) => tracked(recordInsightTool(args))
   );
 
   return server;

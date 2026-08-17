@@ -640,8 +640,8 @@ async function loadGraph(): Promise<void> {
   setStatus(`Fetching ${key}…`);
 
   const query = new URLSearchParams({
-    maxDepth: els.depth.value || '1',
-    maxNodes: els.nodes.value || '50',
+    maxDepth: els.depth.value || '2',
+    maxNodes: els.nodes.value || '100',
   });
 
   const url = `/api/graph/${encodeURIComponent(key)}?${query}`;

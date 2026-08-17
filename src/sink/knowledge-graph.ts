@@ -1,13 +1,28 @@
 /**
- * Read side of the Neo4j knowledge graph (PLAN-NEO4J.md phase 2).
+ * Read side of the Neo4j knowledge graph (PLAN-NEO4J.md phase 2), plus one
+ * deliberate write path: `recordInsight` (PLAN-LEARNING.md). Insights are a
+ * single agent-recorded annotation, not bulk traversal data, so they don't
+ * belong in Neo4jSink's `ingest()` — but they share this class's connection
+ * and read query for the same issue, so a separate write-side class would
+ * just duplicate lifecycle wiring for one Cypher statement.
  *
  * Canned, parameterized Cypher only — no raw query passthrough. Like the
  * sink, the class depends on an injectable query function so unit tests need
  * no database; `createKnowledgeGraph` wires the real driver lazily.
  */
+import { randomUUID } from 'node:crypto';
 import { decodeStoredComments } from './comment-codec.js';
+import { decodeInsightComments, decodeInsightEntities, encodeInsightComments, encodeInsightEntities } from './insight-codec.js';
 import { normalizePersonToken } from './person-identity.js';
-import type { GitlabContext, IssueComment, LogFn, NormalizedIssue } from '../types.js';
+import type {
+  GitlabContext,
+  InsightCommentRef,
+  InsightEntity,
+  InsightInput,
+  IssueComment,
+  LogFn,
+  NormalizedIssue,
+} from '../types.js';
 
 /** Runs one read query and returns the result rows as plain objects. */
 export type CypherQueryFn = (
@@ -57,12 +72,30 @@ export type StoredNeighbor = {
   title: string | null;
 }
 
+/** An `:Insight` node as read back, decoded from its stored JSON sub-fields. */
+export type StoredInsight = {
+  id: string;
+  rootCause?: string;
+  ruledOut: string[];
+  entities: InsightEntity[];
+  relevantComments: InsightCommentRef[];
+  recorded_at: string;
+}
+
+export type RecordInsightResult = {
+  found: boolean;
+  id?: string;
+  recorded_at?: string;
+}
+
 export type KnownContextResult = {
   found: boolean;
   issue?: StoredIssue;
   neighbors?: StoredNeighbor[];
   /** Seconds since this issue was last refreshed from live sources. */
   ageSeconds?: number;
+  /** Prior agent-recorded diagnoses for this issue, newest first — see PLAN-LEARNING.md. */
+  insights?: StoredInsight[];
 }
 
 /** Mirrors the live pipeline's ContextItem, rebuilt from stored data. */
@@ -99,6 +132,23 @@ export type StoredTraceabilityLink = {
   merge_request_id: number;
 }
 
+/**
+ * Traversal completeness for a stored payload. The node-count fields mirror the
+ * live path's `ContextTraversalInfo` and are trustworthy. The depth-reached /
+ * depth-limit fields are deliberately OMITTED here: the neighborhood is gathered
+ * with a single variable-length query that cannot report per-node depth nor
+ * whether relationships existed beyond the requested budget, so reporting them
+ * would give a consumer a false "depth complete". `max_depth` is the requested
+ * hop budget (honest as a budget, not a claim about what was reached).
+ */
+export type StoredTraversalInfo = {
+  nodes_fetched: number;
+  total_nodes: number;
+  max_depth: number;
+  max_nodes: number;
+  node_cap_hit: boolean;
+}
+
 export type StoredContextResult = {
   found: boolean;
   entry?: string;
@@ -108,6 +158,8 @@ export type StoredContextResult = {
   traceability?: { links: StoredTraceabilityLink[] };
   /** Age of the STALEST resolved issue — safe to compare against a freshness budget. */
   ageSeconds?: number;
+  /** Traversal completeness of the stored neighborhood (parity with the live path). */
+  traversal?: StoredTraversalInfo;
 }
 
 export type ProjectActivityMatch = {
@@ -122,7 +174,14 @@ export type ProjectActivityResult = {
 }
 
 export type PersonActivityMatch = {
-  person: { key: string; name?: string; jiraName?: string; gitlabUsername?: string };
+  person: {
+    key: string;
+    name?: string;
+    jiraName?: string;
+    gitlabUsername?: string;
+    /** Systems this person has been observed acting in — derived from Person's secondary labels. */
+    access: Array<'jira' | 'gitlab'>;
+  };
   issues: Array<{ key: string; title?: string; status?: string }>;
   mergeRequests: Array<{ project?: string; iid: number; title?: string; state?: string }>;
   commitCount: number;
@@ -179,7 +238,7 @@ export class KnowledgeGraph {
   async knownContext(key: string): Promise<KnownContextResult> {
     const rows = await this.deps.query(
       `MATCH (i:Issue {key: $key})
-       OPTIONAL MATCH (i)-[r]-(nb)
+       OPTIONAL MATCH (i)-[r]-(nb) WHERE nb IS NULL OR NOT nb:Insight
        WITH i, r, nb
        RETURN i {.key, .title, .type, .status, .assignee, .resolved,
                  first_seen: toString(i.first_seen), last_seen: toString(i.last_seen)} AS issue,
@@ -202,7 +261,75 @@ export class KnowledgeGraph {
         (n): n is StoredNeighbor => n !== null
       ),
       ageSeconds: secondsSince(issue.last_seen),
+      insights: await this.insightsForIssue(key),
     };
+  }
+
+  /**
+   * Records what an agent learned investigating an issue (PLAN-LEARNING.md):
+   * confirmed root cause, ruled-out hypotheses, named entities, and comment
+   * relevance judgments. Additive — a second call creates a new `:Insight`
+   * node rather than overwriting the first, so a later pass can supersede
+   * without erasing what an earlier pass found. Returns `found: false`
+   * without writing anything if the issue isn't in the graph yet (an insight
+   * needs something to attach to — run get_context on the issue first).
+   */
+  async recordInsight(input: InsightInput): Promise<RecordInsightResult> {
+    const id = randomUUID();
+    const rows = await this.deps.query(
+      `MATCH (i:Issue {key: $issueKey})
+       CREATE (ins:Insight {
+         id: $id,
+         rootCause: $rootCause,
+         ruledOut: $ruledOut,
+         entities: $entities,
+         relevantComments: $relevantComments,
+         recorded_at: datetime()
+       })
+       MERGE (ins)-[:RECORDED_ON]->(i)
+       RETURN ins.id AS id, toString(ins.recorded_at) AS recorded_at`,
+      {
+        issueKey: input.issueKey,
+        id,
+        rootCause: input.rootCause ?? null,
+        ruledOut: input.ruledOut ?? [],
+        entities: encodeInsightEntities(input.entities),
+        relevantComments: encodeInsightComments(input.relevantComments),
+      }
+    );
+    const row = rows[0];
+    if (!row) return { found: false };
+    return { found: true, id: row.id as string, recorded_at: row.recorded_at as string };
+  }
+
+  /** Prior agent-recorded insights for one issue, newest first. */
+  async insightsForIssue(key: string): Promise<StoredInsight[]> {
+    const rows = await this.deps.query(
+      `MATCH (i:Issue {key: $key})<-[:RECORDED_ON]-(ins:Insight)
+       RETURN ins {.id, .rootCause, .ruledOut, .entities, .relevantComments,
+                 recorded_at: toString(ins.recorded_at)} AS insight
+       ORDER BY ins.recorded_at DESC`,
+      { key }
+    );
+    type StoredInsightRow = {
+      id: string;
+      rootCause: string | null;
+      ruledOut: string[] | null;
+      entities: string | null;
+      relevantComments: string | null;
+      recorded_at: string;
+    }
+    return rows.map((r) => {
+      const insight = r.insight as StoredInsightRow;
+      return {
+        id: insight.id,
+        rootCause: insight.rootCause ?? undefined,
+        ruledOut: insight.ruledOut ?? [],
+        entities: decodeInsightEntities(insight.entities),
+        relevantComments: decodeInsightComments(insight.relevantComments),
+        recorded_at: insight.recorded_at,
+      };
+    });
   }
 
   /**
@@ -223,7 +350,10 @@ export class KnowledgeGraph {
        OPTIONAL MATCH (mr:MergeRequest)-[:AUTHORED_BY]->(p) WHERE mr.last_seen >= datetime($since)
        WITH p, issues, collect(DISTINCT mr {.project, .iid, .title, .state}) AS mergeRequests
        OPTIONAL MATCH (c:Commit)-[:AUTHORED_BY]->(p) WHERE c.last_seen >= datetime($since)
-       RETURN p {.key, .name, .jiraName, .gitlabUsername} AS person,
+       RETURN p {.key, .name, .jiraName, .gitlabUsername,
+                 access: [l IN labels(p) WHERE l IN ['JiraUser', 'GitlabUser'] |
+                          CASE l WHEN 'JiraUser' THEN 'jira' ELSE 'gitlab' END]
+                } AS person,
               issues, mergeRequests, count(DISTINCT c) AS commitCount`,
       { name, normalized: normalizePersonToken(name), since }
     );
@@ -239,7 +369,7 @@ export class KnowledgeGraph {
    * issue in the neighborhood, so callers comparing against a freshness
    * budget never serve partially-expired data.
    */
-  async storedContext(entryKey: string, maxDepth = 1, maxNodes = 50): Promise<StoredContextResult> {
+  async storedContext(entryKey: string, maxDepth = 2, maxNodes = 100): Promise<StoredContextResult> {
     const depth = Math.min(Math.max(Math.trunc(maxDepth), 0), 5);
     // Variable-length patterns cannot express zero hops, so depth 0 skips the
     // neighborhood expansion entirely.
@@ -320,6 +450,7 @@ export class KnowledgeGraph {
     }
     if (items.length === 0) return { found: false };
 
+    const nodeCapHit = allRows.length > entryFirst.length;
     return {
       found: true,
       entry: entryKey,
@@ -327,6 +458,13 @@ export class KnowledgeGraph {
       repositories: [...allRepositories].sort(),
       traceability: { links },
       ageSeconds: Number.isFinite(stalest) ? Math.max(0, Math.round((Date.now() - stalest) / 1000)) : undefined,
+      traversal: {
+        nodes_fetched: items.length,
+        total_nodes: allRows.length,
+        max_depth: depth,
+        max_nodes: Math.max(1, maxNodes),
+        node_cap_hit: nodeCapHit,
+      },
     };
   }
 

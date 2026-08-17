@@ -72,14 +72,15 @@ test('Neo4jSink creates constraints and runs the person migration once', async (
   const { sink, calls } = makeSink();
   await sink.ingest(traversal());
   const constraintCount = calls.filter((c) => c.query.startsWith('CREATE CONSTRAINT')).length;
-  assert.equal(constraintCount, 7);
+  assert.equal(constraintCount, 8);
+  assert.equal(calls.filter((c) => c.query.includes('FOR (n:Insight)')).length, 1);
   assert.equal(calls.filter((c) => c.query.startsWith('DROP CONSTRAINT person_name')).length, 1);
   assert.equal(calls.filter((c) => c.query.includes('DETACH DELETE p')).length, 1);
   // Migration also drops people written under an older key derivation.
   assert.equal(calls.filter((c) => c.query.includes('p.schemaVersion, 1) <')).length, 1);
   await sink.ingest(traversal());
   const after = calls.filter((c) => c.query.startsWith('CREATE CONSTRAINT')).length;
-  assert.equal(after, 7);
+  assert.equal(after, 8);
 });
 
 test('Neo4jSink merges people on the canonical identity key', async () => {

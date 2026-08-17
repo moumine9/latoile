@@ -67,6 +67,8 @@ export type Config = {
   gitlabActiveDays: number;
   /** Opt-in: fetch each MR's changed file paths (one extra API call per MR). */
   gitlabFetchChangedFiles: boolean;
+  /** Max retries on a 429 rate-limit response before giving up on a request. */
+  gitlabMaxRetries: number;
   /** Jira Cloud base URL for the direct HTTP client (e.g. https://org.atlassian.net). */
   jiraUrl: string;
   /** Atlassian account email for Jira API basic auth. */
@@ -91,6 +93,19 @@ export type Config = {
   watcherStaleMinutes: number;
   /** Max issues the watcher re-traverses per run. */
   watcherBatchSize: number;
+  /**
+   * Opt-in: enrich the context payload with a "code neighborhood" from a local
+   * GitLab Orbit graph (definitions in the files each issue's MRs touched). Off
+   * by default; needs Orbit Local installed and repos indexed, and only adds
+   * data when `gitlabFetchChangedFiles` is also on. See PLAN-ORBIT.md.
+   */
+  orbitEnabled: boolean;
+  /** Orbit CLI binary. */
+  orbitBin: string;
+  /** Override the Orbit DuckDB path (default: the CLI's own ~/.orbit/graph.duckdb). */
+  orbitDbPath: string;
+  /** Max definitions returned per touched repo in the code neighborhood. */
+  orbitMaxDefinitions: number;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -111,8 +126,8 @@ function listFromEnv(name: string): string[] {
 
 export const config: Config = {
   port: intFromEnv('PORT', 3000),
-  maxDepth: intFromEnv('LATOILE_MAX_DEPTH', 1),
-  maxNodes: intFromEnv('LATOILE_MAX_NODES', 50),
+  maxDepth: intFromEnv('LATOILE_MAX_DEPTH', 2),
+  maxNodes: intFromEnv('LATOILE_MAX_NODES', 100),
   cliDelayMs: intFromEnv('LATOILE_CLI_DELAY_MS', 0),
   cliRetries: intFromEnv('LATOILE_CLI_RETRIES', 2),
   cliTimeoutMs: intFromEnv('LATOILE_CLI_TIMEOUT_MS', 30000),
@@ -130,6 +145,7 @@ export const config: Config = {
   gitlabConcurrency: intFromEnv('LATOILE_GITLAB_CONCURRENCY', 8),
   gitlabActiveDays: intFromEnv('LATOILE_GITLAB_ACTIVE_DAYS', 90),
   gitlabFetchChangedFiles: process.env['LATOILE_GITLAB_FETCH_FILES'] === '1',
+  gitlabMaxRetries: intFromEnv('LATOILE_GITLAB_MAX_RETRIES', 4),
   jiraUrl: process.env['LATOILE_JIRA_URL'] || '',
   jiraEmail: process.env['LATOILE_JIRA_EMAIL'] || '',
   jiraToken: process.env['LATOILE_JIRA_TOKEN'] || '',
@@ -143,6 +159,10 @@ export const config: Config = {
   neo4jEnabled: process.env['LATOILE_NEO4J'] !== 'off',
   watcherStaleMinutes: intFromEnv('LATOILE_WATCHER_STALE_MIN', 1440),
   watcherBatchSize: intFromEnv('LATOILE_WATCHER_BATCH', 20),
+  orbitEnabled: process.env['LATOILE_ORBIT'] === '1',
+  orbitBin: process.env['LATOILE_ORBIT_BIN'] || 'orbit',
+  orbitDbPath: process.env['LATOILE_ORBIT_DB'] || '',
+  orbitMaxDefinitions: intFromEnv('LATOILE_ORBIT_MAX_DEFS', 40),
 };
 
 export default config;

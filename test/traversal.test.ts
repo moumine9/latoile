@@ -205,3 +205,36 @@ test('buildContext yields normalized LLM payload with traceability', async () =>
   // Unresolved nodes are excluded from the context payload.
   assert.ok(context.items.every((i) => i.work_item.id));
 });
+
+test('buildContext surfaces a complete traversal (no truncation)', async () => {
+  const { acli, glab } = makeClients(FIXTURE);
+  const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 3, maxNodes: 100 });
+  const context = buildContext(result);
+  assert.ok(context.traversal);
+  assert.equal(context.traversal.node_cap_hit, false);
+  assert.equal(context.traversal.depth_limit_hit, false);
+  assert.equal(context.traversal.max_depth, 3);
+  assert.equal(context.traversal.max_nodes, 100);
+  assert.equal(context.traversal.nodes_fetched, result.stats.fetched);
+  assert.ok(context.traversal.depth_reached >= 1, 'entry has neighbors at depth 1');
+});
+
+test('buildContext flags depth_limit_hit when maxDepth truncates', async () => {
+  const { acli, glab } = makeClients(FIXTURE);
+  const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 0, maxNodes: 100 });
+  const context = buildContext(result);
+  assert.ok(context.traversal);
+  assert.equal(context.traversal.depth_limit_hit, true, 'neighbors past depth 0 left unresolved');
+  assert.equal(context.traversal.node_cap_hit, false);
+  assert.equal(context.traversal.depth_reached, 0, 'only the entry was resolved');
+  assert.equal(context.traversal.nodes_fetched, 1);
+});
+
+test('buildContext flags node_cap_hit when maxNodes truncates', async () => {
+  const { acli, glab } = makeClients(FIXTURE);
+  const result = await traverse('JIRA-1', { acli, glab }, { maxDepth: 3, maxNodes: 1 });
+  const context = buildContext(result);
+  assert.ok(context.traversal);
+  assert.equal(context.traversal.node_cap_hit, true, 'the node cap stopped further fetching');
+  assert.equal(context.traversal.max_nodes, 1);
+});

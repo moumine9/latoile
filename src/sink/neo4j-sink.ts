@@ -25,6 +25,9 @@ export type Neo4jSinkDeps = {
   log?: LogFn;
 }
 
+// :Insight is written by KnowledgeGraph.recordInsight (src/sink/knowledge-graph.ts),
+// not by ingest() below — it's a single agent-recorded annotation, not bulk
+// traversal data. The constraint lives here because this file owns the schema.
 const CONSTRAINTS = [
   'CREATE CONSTRAINT issue_key IF NOT EXISTS FOR (n:Issue) REQUIRE n.key IS UNIQUE',
   'CREATE CONSTRAINT mr_id IF NOT EXISTS FOR (n:MergeRequest) REQUIRE (n.project, n.iid) IS UNIQUE',
@@ -33,6 +36,7 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT doc_url IF NOT EXISTS FOR (n:Doc) REQUIRE n.url IS UNIQUE',
   'CREATE CONSTRAINT project_path IF NOT EXISTS FOR (n:Project) REQUIRE n.path IS UNIQUE',
   'CREATE CONSTRAINT file_key IF NOT EXISTS FOR (n:File) REQUIRE (n.project, n.path) IS UNIQUE',
+  'CREATE CONSTRAINT insight_id IF NOT EXISTS FOR (n:Insight) REQUIRE n.id IS UNIQUE',
 ];
 
 /**
@@ -178,7 +182,8 @@ export class Neo4jSink implements GraphSink {
        SET p.last_seen = datetime(),
            p.schemaVersion = ${PERSON_SCHEMA_VERSION},
            p.name = coalesce(p.name, a.assignee),
-           p.jiraName = a.assignee
+           p.jiraName = a.assignee,
+           p:JiraUser
        MERGE (i)-[r:ASSIGNED_TO]->(p)
        SET r.last_seen = datetime()`,
       {
@@ -253,7 +258,8 @@ export class Neo4jSink implements GraphSink {
          SET p.last_seen = datetime(),
              p.schemaVersion = ${PERSON_SCHEMA_VERSION},
              p.gitlabUsername = m.author,
-             p.name = coalesce(p.name, m.author)
+             p.name = coalesce(p.name, m.author),
+             p:GitlabUser
          MERGE (mr)-[ar:AUTHORED_BY]->(p)
          SET ar.last_seen = datetime())`,
       { mrs }
@@ -274,7 +280,8 @@ export class Neo4jSink implements GraphSink {
          SET p.last_seen = datetime(),
              p.schemaVersion = ${PERSON_SCHEMA_VERSION},
              // A display name is the best label we ever get — let it win.
-             p.name = CASE WHEN c.authorIsDisplay THEN c.author ELSE coalesce(p.name, c.author) END
+             p.name = CASE WHEN c.authorIsDisplay THEN c.author ELSE coalesce(p.name, c.author) END,
+             p:GitlabUser
          MERGE (cm)-[ar:AUTHORED_BY]->(p)
          SET ar.last_seen = datetime())`,
       { commits }
